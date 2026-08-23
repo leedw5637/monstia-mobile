@@ -87,7 +87,7 @@ jobs:
           ICON=$(find "$GITHUB_WORKSPACE" -type f \( -name "apk아이콘.png" -o -name "apk_icon.png" \) | head -n 1)
 
           if [ -z "$ICON" ]; then
-            echo "::error::apk아이콘.png 파일을 저장소에서 찾지 못했습니다. 저장소 최상단에 apk아이콘.png를 업로드한 뒤 다시 실행하세요."
+            echo "::error::apk아이콘.png 파일을 저장소에서 찾지 못했습니다."
             exit 1
           fi
 
@@ -114,22 +114,44 @@ jobs:
           </paths>
           EOF
 
-          if [ ! -f "$MANIFEST" ]; then
-            echo "::error::AndroidManifest.xml을 찾지 못했습니다."
-            exit 1
-          fi
-
           sed -i 's|@mipmap/ic_launcher_round|@drawable/ic_launcher|g' "$MANIFEST"
           sed -i 's|@mipmap/ic_launcher|@drawable/ic_launcher|g' "$MANIFEST"
 
-          echo "Android 리소스 준비 완료"
-          find "$RES" -maxdepth 2 -type f | sort
+      - name: 분할 게임 파일 합치기
+        shell: bash
+        run: |
+          mkdir -p "$GRADLE_ROOT/app/src/main/assets"
+
+          if [ -f "$GITHUB_WORKSPACE/game.html" ]; then
+            cp "$GITHUB_WORKSPACE/game.html" "$GRADLE_ROOT/app/src/main/assets/game.html"
+          else
+            PARTS=$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name "game.part*" | sort)
+
+            if [ -z "$PARTS" ]; then
+              echo "::error::game.part01, game.part02, game.part03 파일을 저장소 최상단에 올려주세요."
+              exit 1
+            fi
+
+            cat $PARTS > "$GRADLE_ROOT/app/src/main/assets/game.html"
+          fi
+
+          echo "복원된 game.html 크기:"
+          ls -lh "$GRADLE_ROOT/app/src/main/assets/game.html"
+
+          ACTUAL_SHA=$(sha256sum "$GRADLE_ROOT/app/src/main/assets/game.html" | awk '{print $1}')
+          EXPECTED_SHA="aa8990cd82e3ed42777a5d7fdd6ed78c596429ea5c355808196b5af23cef0a50"
+
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::game.html 복원 해시가 일치하지 않습니다."
+            echo "actual=$ACTUAL_SHA"
+            exit 1
+          fi
 
       - name: 핵심 게임 파일 확인
         shell: bash
         run: |
           test -f "$GRADLE_ROOT/app/src/main/assets/game.html" || {
-            echo "::error::app/src/main/assets/game.html이 없습니다."
+            echo "::error::game.html이 없습니다."
             exit 1
           }
 
@@ -138,8 +160,6 @@ jobs:
             echo "::error::MainActivity 파일이 없습니다."
             exit 1
           fi
-
-          echo "게임 HTML과 MainActivity 확인 완료"
 
       - name: MONSTIA 자동 업데이트 주소 설정
         shell: bash
@@ -157,7 +177,6 @@ jobs:
 
           sed -i '/^MONSTIA_UPDATE_URL=/d' "$GRADLE_ROOT/gradle.properties"
           echo "MONSTIA_UPDATE_URL=$UPDATE_URL" >> "$GRADLE_ROOT/gradle.properties"
-          echo "자동 업데이트 주소: $UPDATE_URL"
 
       - name: APK 서명키 복원
         shell: bash
@@ -193,7 +212,6 @@ jobs:
           fi
 
           cp "$APK" "$GITHUB_WORKSPACE/MONSTIA.apk"
-          echo "APK 생성 완료: MONSTIA.apk"
 
       - name: APK 다운로드 등록
         uses: actions/upload-artifact@v4
@@ -207,10 +225,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="android-latest"
-
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --title "MONSTIA Android" \
+              --notes "MONSTIA Android 최신 APK"
+
+          gh release upload "$TAG" MONSTIA.apk --clobber
               --notes "MONSTIA Android 최신 APK"
 
           gh release upload "$TAG" MONSTIA.apk --clobber
