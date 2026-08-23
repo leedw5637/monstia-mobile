@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: 프로젝트 받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Java 17 설정
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -28,23 +28,80 @@ jobs:
       - name: MONSTIA 프로젝트 위치 찾기
         shell: bash
         run: |
-          SETTINGS_FILE=$(find . -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1)
+          APP_BUILD=$(find . -type f \( -path "*/app/build.gradle.kts" -o -path "*/app/build.gradle" \) | head -n 1)
 
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "Gradle 프로젝트를 찾지 못했습니다."
-            echo "현재 저장소 파일:"
-            find . -maxdepth 3 -type f | sort
+          if [ -z "$APP_BUILD" ]; then
+            echo "app/build.gradle.kts 를 찾지 못했습니다."
+            find . -maxdepth 5 -type f | sort
             exit 1
           fi
 
-          GRADLE_ROOT=$(dirname "$SETTINGS_FILE")
-          echo "Gradle 프로젝트 위치: $GRADLE_ROOT"
+          GRADLE_ROOT=$(dirname "$(dirname "$APP_BUILD")")
+
+          echo "Android 프로젝트 위치: $GRADLE_ROOT"
           echo "GRADLE_ROOT=$GRADLE_ROOT" >> "$GITHUB_ENV"
 
-      - name: 자동 업데이트 주소 설정
+      - name: 누락된 Gradle 파일 자동 생성
         shell: bash
         run: |
-          echo "MONSTIA_UPDATE_URL=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/release/update.json" >> "$GRADLE_ROOT/gradle.properties"
+          if [ ! -f "$GRADLE_ROOT/settings.gradle.kts" ]; then
+            cat > "$GRADLE_ROOT/settings.gradle.kts" <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "MONSTIA"
+          include(":app")
+          EOF
+          fi
+
+          if [ ! -f "$GRADLE_ROOT/build.gradle.kts" ]; then
+            cat > "$GRADLE_ROOT/build.gradle.kts" <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+          }
+          EOF
+          fi
+
+          touch "$GRADLE_ROOT/gradle.properties"
+
+          grep -q "android.useAndroidX" "$GRADLE_ROOT/gradle.properties" || \
+            echo "android.useAndroidX=true" >> "$GRADLE_ROOT/gradle.properties"
+
+          grep -q "android.nonTransitiveRClass" "$GRADLE_ROOT/gradle.properties" || \
+            echo "android.nonTransitiveRClass=true" >> "$GRADLE_ROOT/gradle.properties"
+
+          echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8" >> "$GRADLE_ROOT/gradle.properties"
+
+      - name: MONSTIA 자동 업데이트 주소 설정
+        shell: bash
+        run: |
+          PROJECT_PATH="${GRADLE_ROOT#./}"
+
+          if [ "$PROJECT_PATH" = "." ]; then
+            PROJECT_PATH=""
+          fi
+
+          if [ -n "$PROJECT_PATH" ]; then
+            UPDATE_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/${PROJECT_PATH}/release/update.json"
+          else
+            UPDATE_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/release/update.json"
+          fi
+
+          echo "자동 업데이트 주소: $UPDATE_URL"
+          echo "MONSTIA_UPDATE_URL=$UPDATE_URL" >> "$GRADLE_ROOT/gradle.properties"
 
       - name: APK 서명키 복원
         shell: bash
@@ -67,27 +124,29 @@ jobs:
           MONSTIA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           cd "$GRADLE_ROOT"
-          gradle :app:assembleRelease
+          gradle :app:assembleRelease --stacktrace
 
-      - name: APK 파일 준비
+      - name: APK 파일 찾기
         shell: bash
         run: |
-          APK=$(find "$GRADLE_ROOT/app/build/outputs/apk/release" -name "*.apk" | head -n 1)
+          APK=$(find "$GRADLE_ROOT/app/build/outputs/apk/release" -type f -name "*.apk" | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "생성된 APK를 찾지 못했습니다."
+            echo "APK 파일을 찾지 못했습니다."
+            find "$GRADLE_ROOT/app/build" -type f | sort || true
             exit 1
           fi
 
+          echo "생성 APK: $APK"
           cp "$APK" "$GITHUB_WORKSPACE/MONSTIA.apk"
 
-      - name: APK 다운로드 파일 등록
+      - name: APK 다운로드 등록
         uses: actions/upload-artifact@v4
         with:
           name: MONSTIA-APK
           path: MONSTIA.apk
 
-      - name: MONSTIA Release 생성
+      - name: 최신 MONSTIA Release 등록
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -95,8 +154,8 @@ jobs:
           TAG="android-latest"
 
           gh release view "$TAG" >/dev/null 2>&1 || \
-          gh release create "$TAG" \
-            --title "MONSTIA Android" \
-            --notes "MONSTIA Android 최신 버전"
+            gh release create "$TAG" \
+              --title "MONSTIA Android" \
+              --notes "MONSTIA Android 최신 APK"
 
           gh release upload "$TAG" MONSTIA.apk --clobber
