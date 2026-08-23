@@ -65,7 +65,7 @@ jobs:
           GAME_VERSION=$(python3 - "$MAIN/assets/game.html" <<'PY'
           import re, sys
           p = sys.argv[1]
-          text = open(p, "r", encoding="utf-8", errors="ignore").read(2_000_000)
+          text = open(p, "r", encoding="utf-8", errors="ignore").read()
           m = re.search(r"const\s+GAME_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
           if not m:
               raise SystemExit("GAME_VERSION을 game.html에서 찾지 못했습니다.")
