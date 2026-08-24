@@ -5031,15 +5031,13 @@ const cloud = {
     const st = document.createElement('style');
     st.id = 'monstia-cloud-style';
     st.textContent = `
-      html.monstia-cloud-open,body.monstia-cloud-open{touch-action:auto!important;overflow:hidden!important}
-      body.monstia-cloud-open #app{pointer-events:none!important}
-      #monstia-cloud-modal{position:fixed;inset:0;width:100%;height:100%;z-index:99999;background:rgba(4,7,15,.86);display:flex;align-items:center;justify-content:center;padding:12px;touch-action:manipulation;-webkit-user-select:text;user-select:text;overscroll-behavior:contain}
-      #monstia-cloud-card{position:relative;z-index:100000;width:min(430px,100%);max-height:88dvh;overflow:auto;-webkit-overflow-scrolling:touch;background:#171b2b;color:#eef4ff;border:1px solid #4e638a;border-radius:14px;box-shadow:0 20px 70px rgba(0,0,0,.65);padding:18px;font-family:system-ui,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;touch-action:pan-y}
+      #monstia-cloud-modal{position:fixed;inset:0;z-index:99999;background:rgba(4,7,15,.86);display:flex;align-items:center;justify-content:center;padding:18px;touch-action:auto;-webkit-user-select:text;user-select:text}
+      #monstia-cloud-card{width:min(430px,100%);max-height:92dvh;overflow:auto;background:#171b2b;color:#eef4ff;border:1px solid #4e638a;border-radius:14px;box-shadow:0 20px 70px rgba(0,0,0,.65);padding:18px;font-family:system-ui,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif}
       #monstia-cloud-card h2{font-size:19px;margin:0 0 6px;color:#8cddff} #monstia-cloud-card p{font-size:12px;line-height:1.55;color:#bac6dc;margin:6px 0 12px}
       #monstia-cloud-card label{display:block;font-size:11px;color:#aebbd2;margin:10px 0 4px}
-      #monstia-cloud-card input{position:relative;z-index:100001;width:100%;padding:12px;border-radius:8px;border:1px solid #42516d;background:#0f1320;color:#fff;font-size:16px;line-height:1.3;touch-action:manipulation;-webkit-user-select:text;user-select:text}
+      #monstia-cloud-card input{width:100%;padding:11px 12px;border-radius:8px;border:1px solid #42516d;background:#0f1320;color:#fff;font-size:14px;touch-action:auto;-webkit-user-select:text;user-select:text}
       #monstia-cloud-card input:focus{outline:2px solid #4ebbe8;outline-offset:1px}
-      .mc-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.mc-btn{position:relative;z-index:100001;flex:1 1 120px;border:0;border-radius:8px;padding:12px 10px;background:#315a92;color:#fff;font-size:14px;font-weight:700;touch-action:manipulation}.mc-btn.alt{background:#30374a}.mc-btn.good{background:#277755}.mc-btn.warn{background:#8a4b42}.mc-status{padding:9px 10px;background:#0d1220;border-radius:8px;font-size:12px;color:#d8e6ff;margin:10px 0}.mc-small{font-size:10px!important;color:#8593ad!important;word-break:break-all}.mc-hide{display:none!important}
+      .mc-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.mc-btn{flex:1 1 120px;border:0;border-radius:8px;padding:11px 10px;background:#315a92;color:#fff;font-size:13px;font-weight:700;touch-action:auto}.mc-btn.alt{background:#30374a}.mc-btn.good{background:#277755}.mc-btn.warn{background:#8a4b42}.mc-status{padding:9px 10px;background:#0d1220;border-radius:8px;font-size:12px;color:#d8e6ff;margin:10px 0}.mc-small{font-size:10px!important;color:#8593ad!important;word-break:break-all}.mc-hide{display:none!important}
     `;
     document.head.appendChild(st);
   },
@@ -5053,16 +5051,9 @@ const cloud = {
       modal.id = 'monstia-cloud-modal';
       modal.innerHTML = '<div id="monstia-cloud-card"></div>';
       document.body.appendChild(modal);
-      const card = modal.querySelector('#monstia-cloud-card');
-      // 모바일 WebView에서 키보드/터치가 배경 클릭으로 오인되는 현상을 막는다.
-      for (const ev of ['pointerdown','pointerup','click','touchstart','touchend']) {
-        card.addEventListener(ev, (e) => e.stopPropagation(), { passive: ev.startsWith('touch') });
-      }
-      // 배경을 눌러서는 닫히지 않는다. '닫기' 버튼으로만 닫는다.
-      modal.addEventListener('click', (e) => e.stopPropagation());
+      // 모바일 APK에서 입력/터치가 배경 클릭으로 오인되어 창이 닫히는 현상 방지
+      // 이제 클라우드 창은 '닫기' 버튼으로만 닫힌다.
     }
-    document.documentElement.classList.add('monstia-cloud-open');
-    document.body.classList.add('monstia-cloud-open');
     modal.style.display = 'flex';
     this.renderModal();
   },
@@ -5070,9 +5061,6 @@ const cloud = {
   close() {
     const el = document.getElementById('monstia-cloud-modal');
     if (el) el.style.display = 'none';
-    document.documentElement.classList.remove('monstia-cloud-open');
-    document.body.classList.remove('monstia-cloud-open');
-    try { document.activeElement?.blur?.(); } catch {}
   },
 
   esc(s) {
@@ -8098,7 +8086,7 @@ class GameManualScene {
         'v7.8 버프/디버프 잔여턴 표시 + 야생 진화단계 레벨 보정 + 자동줍기권 추가',
         'v0.8.0 이메일 계정 로그인 + PC/모바일 공용 클라우드 세이브 추가',
         'v0.8.0 저장 시 로컬·클라우드 동시 저장 + 최신 저장 자동 동기화 추가',
-        'v0.8.1 모바일 APK 클라우드 로그인 창 터치·키보드 안정화',
+        'v0.8.1 모바일 클라우드 창이 배경 터치로 닫히는 현상 수정',
         '게임 수정 후에도 동일 계정의 세이브 데이터를 계속 이어서 사용할 수 있도록 구성되어 있습니다.'
       ]},
     ];
