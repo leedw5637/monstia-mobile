@@ -509,6 +509,108 @@ const QUESTS = {
 };
 
 // ------------------------------------------------------------
+// v0.9.0 업적 / 칭호
+// 업적은 조건을 만족하면 자동 해금되고, 해금한 칭호 중 하나를 장착할 수 있다.
+// ------------------------------------------------------------
+function ownedMonsters(game) {
+  return [...(game.state.party || []), ...((game.state.box || []).flat())];
+}
+function caughtSpeciesCount(game) {
+  return DEX_ORDER.filter((id) => (game.state.dex?.[id] || 0) === 2).length;
+}
+function completedQuestCount(game) {
+  return Object.keys(QUESTS).filter((id) => game.state.quests?.[id]?.status === 'done').length;
+}
+function badgeCount(game) {
+  return Object.keys(BADGES).filter((id) => !!game.state.badges?.[id]).length;
+}
+
+const ACHIEVEMENTS = [
+  {
+    id:'first_partner', name:'첫 동료', title:'새싹 모험가',
+    desc:'첫 파트너 몬스터를 얻는다.',
+    test:(game)=>!!game.state.progress?.starter,
+    progress:(game)=>game.state.progress?.starter ? '달성 완료' : '첫 파트너를 선택하세요',
+  },
+  {
+    id:'catch10', name:'수집의 시작', title:'몬스터 수집가',
+    desc:'서로 다른 몬스터 10종을 포획한다.',
+    test:(game)=>caughtSpeciesCount(game)>=10,
+    progress:(game)=>`${caughtSpeciesCount(game)}/10종`,
+  },
+  {
+    id:'catch30', name:'숙련된 조사', title:'숙련 조사원',
+    desc:'서로 다른 몬스터 30종을 포획한다.',
+    test:(game)=>caughtSpeciesCount(game)>=30,
+    progress:(game)=>`${caughtSpeciesCount(game)}/30종`,
+  },
+  {
+    id:'dex_complete', name:'도감 완성', title:'도감 마스터',
+    desc:'현재 도감의 모든 몬스터를 포획한다.',
+    test:(game)=>DEX_ORDER.every((id)=>(game.state.dex?.[id]||0)===2),
+    progress:(game)=>`${caughtSpeciesCount(game)}/${DEX_ORDER.length}종`,
+  },
+  {
+    id:'badge3', name:'체육관 도전자', title:'증표 사냥꾼',
+    desc:'체육관 증표를 3개 획득한다.',
+    test:(game)=>badgeCount(game)>=3,
+    progress:(game)=>`${badgeCount(game)}/3개`,
+  },
+  {
+    id:'badge_all', name:'7개 지역 제패', title:'MONSTIA 챔피언',
+    desc:'모든 지역의 체육관 증표를 획득한다.',
+    test:(game)=>Object.keys(BADGES).every((id)=>!!game.state.badges?.[id]),
+    progress:(game)=>`${badgeCount(game)}/${Object.keys(BADGES).length}개`,
+  },
+  {
+    id:'quest5', name:'마을의 해결사', title:'믿음직한 해결사',
+    desc:'서브 퀘스트 5개를 완료한다.',
+    test:(game)=>completedQuestCount(game)>=5,
+    progress:(game)=>`${completedQuestCount(game)}/5개`,
+  },
+  {
+    id:'quest_all', name:'모든 부탁 완료', title:'만능 해결사',
+    desc:'등록된 모든 서브 퀘스트를 완료한다.',
+    test:(game)=>Object.keys(QUESTS).every((id)=>game.state.quests?.[id]?.status==='done'),
+    progress:(game)=>`${completedQuestCount(game)}/${Object.keys(QUESTS).length}개`,
+  },
+  {
+    id:'legendary', name:'전설과의 조우', title:'전설의 추적자',
+    desc:'전설 몬스터를 1종 이상 포획한다.',
+    test:(game)=>DEX_ORDER.some((id)=>MONSTERS[id]?.legendary && (game.state.dex?.[id]||0)===2),
+    progress:(game)=>DEX_ORDER.some((id)=>MONSTERS[id]?.legendary && (game.state.dex?.[id]||0)===2) ? '달성 완료' : '전설 포획 0/1',
+  },
+  {
+    id:'resonant', name:'공명의 선택', title:'공명의 선택자',
+    desc:'공명 개체를 1마리 이상 보유한다.',
+    test:(game)=>ownedMonsters(game).some((m)=>!!m.resonant),
+    progress:(game)=>ownedMonsters(game).some((m)=>!!m.resonant) ? '달성 완료' : '공명 개체 0/1',
+  },
+  {
+    id:'millionaire', name:'백만 골드', title:'황금의 모험가',
+    desc:'소지금 1,000,000원을 달성한다.',
+    test:(game)=>Number(game.state.money||0)>=1000000,
+    progress:(game)=>`${Math.min(1000000,Number(game.state.money||0)).toLocaleString()}/1,000,000원`,
+  },
+];
+
+function refreshAchievements(game) {
+  if (!game.state.achievements) game.state.achievements = {};
+  const newly = [];
+  for (const a of ACHIEVEMENTS) {
+    if (!game.state.achievements[a.id] && a.test(game)) {
+      game.state.achievements[a.id] = { unlockedAt:Date.now() };
+      newly.push(a);
+    }
+  }
+  return newly;
+}
+
+function activeTitleLabel(game) {
+  return String(game.state.activeTitle || '신입 모험가');
+}
+
+// ------------------------------------------------------------
 // 기술
 //   minLv : 이 레벨 이상이어야 배울 수 있다 (학습표와 랜덤 습득 모두에 적용)
 // ------------------------------------------------------------
@@ -1066,17 +1168,18 @@ const MONSTERS = {
 
 // 레벨이 오를수록 최대 SP도 함께 상승한다.
 // 전설/환상은 기술 소모가 큰 편이라 약간 더 넓은 SP 풀을 가진다.
-function maxSpFor(id, level) {
+function maxSpFor(id, level, traits = null) {
   const species = MONSTERS[id];
   const stage = Math.max(1, Math.min(3, Number(species?.stage || 1)));
   const bonus = species?.legendary ? 14 : species?.mythical ? 10 : 0;
-  return 28 + Math.max(1, Number(level || 1)) * 2 + (stage - 1) * 6 + bonus;
+  const equip = ITEMS[traits?.equipment]?.equip || {};
+  return 28 + Math.max(1, Number(level || 1)) * 2 + (stage - 1) * 6 + bonus + Number(equip.spFlat || 0);
 }
 
 function normalizeSp(inst) {
-  const oldMax = Math.max(1, Number(inst.maxSp || maxSpFor(inst.id, inst.level)));
+  const oldMax = Math.max(1, Number(inst.maxSp || maxSpFor(inst.id, inst.level, inst)));
   const old = Number.isFinite(inst.sp) ? inst.sp : oldMax;
-  const cap = maxSpFor(inst.id, inst.level);
+  const cap = maxSpFor(inst.id, inst.level, inst);
   inst.maxSp = cap;
   inst.sp = Math.max(0, Math.min(cap, Math.round(old)));
   return inst;
@@ -1164,6 +1267,26 @@ const ITEMS = {
     id: 'berry', name: '달콤열매', category: '기타', price: 100, friendship: 5,
     desc: '몬스터가 좋아하는 열매. 친밀도가 조금 오른다.',
   },
+  attack_charm: {
+    id:'attack_charm', name:'공격의 부적', category:'장비', price:8000,
+    equip:{ atkMul:1.10 }, desc:'몬스터에게 장착하면 공격이 10% 증가한다.',
+  },
+  guard_charm: {
+    id:'guard_charm', name:'수호의 부적', category:'장비', price:8000,
+    equip:{ defMul:1.10 }, desc:'몬스터에게 장착하면 방어가 10% 증가한다.',
+  },
+  life_necklace: {
+    id:'life_necklace', name:'생명의 목걸이', category:'장비', price:9000,
+    equip:{ hpMul:1.15 }, desc:'몬스터에게 장착하면 최대 HP가 15% 증가한다.',
+  },
+  speed_feather: {
+    id:'speed_feather', name:'속도의 깃털', category:'장비', price:9000,
+    equip:{ spdMul:1.10 }, desc:'몬스터에게 장착하면 속도가 10% 증가한다.',
+  },
+  sp_crystal: {
+    id:'sp_crystal', name:'SP 결정', category:'장비', price:7500,
+    equip:{ spFlat:20 }, desc:'몬스터에게 장착하면 최대 SP가 20 증가한다.',
+  },
   auto_pickup_pass: {
     id: 'auto_pickup_pass', name: '자동줍기권', category: '기타', price: 100000,
     upgrade: 'autoPickup', unsellable: true,
@@ -1174,8 +1297,12 @@ const ITEMS = {
 const SHOP_STOCK = [
   'capsule', 'capsule_plus', 'capsule_supreme', 'capsule_ultra',
   'potion', 'potion_plus', 'sp_potion', 'sp_potion_plus', 'sp_potion_supreme',
-  'revive', 'move_cd', 'candy_small', 'scroll', 'berry', 'auto_pickup_pass',
+  'revive', 'move_cd', 'candy_small', 'scroll', 'berry',
+  'attack_charm', 'guard_charm', 'life_necklace', 'speed_feather', 'sp_crystal',
+  'auto_pickup_pass',
 ];
+
+const EQUIPMENT_IDS = ['attack_charm','guard_charm','life_necklace','speed_feather','sp_crystal'];
 
 // ------------------------------------------------------------
 // 지역별 야생 출현표
@@ -4319,6 +4446,23 @@ class AssetManager {
     return this._get(`item:${itemId}`, `assets/items/${itemId}.png`, () => {
       const c = document.createElement('canvas'); c.width = 16; c.height = 16;
       const x = c.getContext('2d'); x.imageSmoothingEnabled = false;
+      if (ITEMS[itemId]?.equip) {
+        x.fillStyle='#25283a'; x.fillRect(2,2,12,12);
+        if (itemId==='attack_charm') {
+          x.fillStyle='#e06c3c'; x.fillRect(7,2,2,12); x.fillRect(4,5,8,5); x.fillStyle='#ffd27a'; x.fillRect(6,6,4,3);
+        } else if (itemId==='guard_charm') {
+          x.fillStyle='#5f8fd0'; x.fillRect(4,3,8,7); x.fillRect(6,10,4,3); x.fillStyle='#d7e8ff'; x.fillRect(6,5,4,4);
+        } else if (itemId==='life_necklace') {
+          x.fillStyle='#d85b68'; x.fillRect(4,5,3,3); x.fillRect(9,5,3,3); x.fillRect(5,8,6,3); x.fillRect(7,11,2,2);
+          x.fillStyle='#e9c65c'; x.fillRect(7,2,2,3);
+        } else if (itemId==='speed_feather') {
+          x.fillStyle='#83c985'; x.fillRect(4,10,8,2); x.fillRect(6,7,6,2); x.fillRect(8,4,4,2); x.fillRect(10,2,2,2);
+          x.fillStyle='#e8f7df'; x.fillRect(6,11,1,2);
+        } else {
+          x.fillStyle='#67d5e3'; x.fillRect(7,2,2,12); x.fillRect(5,4,6,8); x.fillStyle='#d9fbff'; x.fillRect(7,4,2,5);
+        }
+        return c;
+      }
       x.fillStyle = '#d8c995'; x.fillRect(3, 3, 10, 10);
       x.fillStyle = '#7f6a3d'; x.fillRect(5, 1, 6, 3);
       return c;
@@ -4523,7 +4667,7 @@ const sfx = new Sfx();
 
 const KEY = 'monstia.save.slot1';
 const BACKUP_KEY = 'monstia.save.slot1.backup';
-const SAVE_VERSION = 16;
+const SAVE_VERSION = 17;
 
 // v(n) -> v(n+1) 변환 함수들. 예: MIGRATIONS[1] = (d) => {...; return d;}
 const MIGRATIONS = {
@@ -4673,6 +4817,15 @@ const MIGRATIONS = {
     if (d.upgrades.autoPickup === undefined) d.upgrades.autoPickup = false;
     return d;
   },
+  // v16 -> v17 : 퀘스트 추적 / 업적·칭호 / 몬스터 장비 추가.
+  16: (d) => {
+    if (d.trackedQuest === undefined) d.trackedQuest = null;
+    if (!d.achievements) d.achievements = {};
+    if (!d.activeTitle) d.activeTitle = '신입 모험가';
+    const all = [...(d.party || []), ...((d.box || []).flat())];
+    for (const m of all) if (m.equipment === undefined) m.equipment = null;
+    return d;
+  },
 };
 
 function migrate(data) {
@@ -4794,6 +4947,16 @@ const cloud = {
     if (this.isLoggedIn()) return this.session.user.email || '로그인됨';
     if (this.isConfigured()) return '로그인 필요';
     return '설정 필요';
+  },
+
+  hudText() {
+    if (!this.isConfigured()) return '☁ 설정 필요';
+    if (!this.isLoggedIn()) return '☁ 로그인 필요';
+    if (this.uploading) return '☁ 저장 중';
+    if (this.pendingPayload) return '☁ 저장 대기';
+    if (/실패|확인 필요|오류/.test(this.lastMessage || '')) return '☁ 연결 오류';
+    if (/불러/.test(this.lastMessage || '')) return '☁ 불러오기 완료';
+    return '☁ 동기화 완료';
   },
 
   normalizeUrl(url) {
@@ -4940,6 +5103,7 @@ const cloud = {
 
   queueUpload(payload) {
     if (!this.isLoggedIn()) return;
+    this.lastMessage = '클라우드 저장 대기';
     this.pendingPayload = payload;
     if (this.uploadTimer) clearTimeout(this.uploadTimer);
     this.uploadTimer = setTimeout(() => this.flushUpload(), 500);
@@ -4951,6 +5115,7 @@ const cloud = {
     this.pendingPayload = null;
     this.uploadTimer = null;
     this.uploading = true;
+    this.lastMessage = '클라우드 저장 중';
     try {
       const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
       await this.uploadData(data);
@@ -5186,7 +5351,7 @@ globalThis.MONSTIA_CLOUD = cloud;
 // UI 좌표는 모두 "가상 좌표(160x224)" 기준이며 내부에서 scale 을 곱한다.
 // ============================================================
 
-const GAME_VERSION = '0.8.1';
+const GAME_VERSION = '0.9.0';
 const VW = 160;
 const VH = 224;
 
@@ -5483,11 +5648,12 @@ function statsFor(id, level, traits = null) {
   const rawAtk = Math.floor(s.base.atk * level / 45) + 6 + Math.floor(traitValue(traits, 'atk') * talentScale * 0.65);
   const rawDef = Math.floor(s.base.def * level / 45) + 6 + Math.floor(traitValue(traits, 'def') * talentScale * 0.65);
   const rawSpd = Math.floor(baseSpeedFor(s) * level / 45) + 6 + Math.floor(traitValue(traits, 'spd') * talentScale * 0.65);
+  const equip = ITEMS[traits?.equipment]?.equip || {};
   return {
-    maxHp: Math.max(1, Math.floor(rawHp * mods.hp)),
-    atk: Math.max(1, Math.floor(rawAtk * mods.atk)),
-    def: Math.max(1, Math.floor(rawDef * mods.def)),
-    spd: Math.max(1, Math.floor(rawSpd * mods.spd)),
+    maxHp: Math.max(1, Math.floor(rawHp * mods.hp * Number(equip.hpMul || 1))),
+    atk: Math.max(1, Math.floor(rawAtk * mods.atk * Number(equip.atkMul || 1))),
+    def: Math.max(1, Math.floor(rawDef * mods.def * Number(equip.defMul || 1))),
+    spd: Math.max(1, Math.floor(rawSpd * mods.spd * Number(equip.spdMul || 1))),
   };
 }
 
@@ -5505,6 +5671,7 @@ function normalizeInstance(inst) {
   if (inst.status === undefined) inst.status = null;
   if (!Number.isFinite(inst.statusTurns)) inst.statusTurns = 0;
   if (inst.capturedWith === undefined) inst.capturedWith = null;
+  if (inst.equipment === undefined || (inst.equipment && !ITEMS[inst.equipment]?.equip)) inst.equipment = null;
   const oldMax = Math.max(1, Number(inst.maxHp || 1));
   const ratio = Math.max(0, Math.min(1, Number(inst.hp ?? oldMax) / oldMax));
   const st = statsFor(inst.id, inst.level, inst);
@@ -5561,9 +5728,10 @@ function createInstance(id, level, opts = {}) {
   const nature = opts.nature || randomNature();
   const talent = opts.talent || randomTalent();
   const resonant = opts.resonant !== undefined ? !!opts.resonant : Math.random() < (1 / 777);
-  const traits = { nature, talent };
+  const equipment = opts.equipment || null;
+  const traits = { nature, talent, equipment };
   const st = statsFor(id, level, traits);
-  const maxSp = maxSpFor(id, level);
+  const maxSp = maxSpFor(id, level, traits);
   return {
     sid: sidCounter++,
     id, nick: opts.nick || null,
@@ -5576,6 +5744,7 @@ function createInstance(id, level, opts = {}) {
     capturedWith: opts.capturedWith || null,
     moves: opts.moves || movesAtLevel(id, level),
     nature, talent, resonant,
+    equipment,
     status: opts.status || null,
     statusTurns: opts.statusTurns || 0,
   };
@@ -5590,7 +5759,7 @@ function healInstance(inst) {
   const st = statsFor(inst.id, inst.level, inst);
   inst.maxHp = st.maxHp; inst.atk = st.atk; inst.def = st.def; inst.spd = st.spd;
   inst.hp = inst.maxHp;
-  inst.maxSp = maxSpFor(inst.id, inst.level);
+  inst.maxSp = maxSpFor(inst.id, inst.level, inst);
   inst.sp = inst.maxSp;
   inst.status = null; inst.statusTurns = 0;
 }
@@ -5604,12 +5773,12 @@ function gainExp(inst, amount) {
   while (inst.exp >= inst.expToNext) {
     inst.exp -= inst.expToNext;
     inst.level += 1;
-    const before = { maxHp: inst.maxHp, maxSp: inst.maxSp || maxSpFor(inst.id, inst.level - 1), atk: inst.atk, def: inst.def, spd: inst.spd };
+    const before = { maxHp: inst.maxHp, maxSp: inst.maxSp || maxSpFor(inst.id, inst.level - 1, inst), atk: inst.atk, def: inst.def, spd: inst.spd };
     const st = statsFor(inst.id, inst.level, inst);
     const gained = st.maxHp - before.maxHp;
     inst.maxHp = st.maxHp; inst.atk = st.atk; inst.def = st.def; inst.spd = st.spd;
     if (inst.hp > 0) inst.hp = Math.min(inst.maxHp, inst.hp + gained);
-    const newMaxSp = maxSpFor(inst.id, inst.level);
+    const newMaxSp = maxSpFor(inst.id, inst.level, inst);
     const spGained = Math.max(0, newMaxSp - before.maxSp);
     inst.maxSp = newMaxSp;
     inst.sp = Math.min(inst.maxSp, Math.max(0, Number(inst.sp ?? before.maxSp)) + spGained);
@@ -5635,13 +5804,13 @@ function pendingEvolution(inst) {
 
 function evolveInstance(inst, toId) {
   const ratio = inst.hp / inst.maxHp;
-  const oldMaxSp = Math.max(1, Number(inst.maxSp || maxSpFor(inst.id, inst.level)));
+  const oldMaxSp = Math.max(1, Number(inst.maxSp || maxSpFor(inst.id, inst.level, inst)));
   const oldSp = Math.max(0, Number(inst.sp ?? oldMaxSp));
   inst.id = toId;
   const st = statsFor(toId, inst.level, inst);
   inst.maxHp = st.maxHp; inst.atk = st.atk; inst.def = st.def; inst.spd = st.spd;
   inst.hp = Math.max(1, Math.round(inst.maxHp * ratio));
-  inst.maxSp = maxSpFor(toId, inst.level);
+  inst.maxSp = maxSpFor(toId, inst.level, inst);
   inst.sp = Math.min(inst.maxSp, oldSp + Math.max(0, inst.maxSp - oldMaxSp));
   inst.friendship = Math.min(255, inst.friendship + 5);
 }
@@ -6687,7 +6856,7 @@ class MountMenu {
 // ============================================================
 class MainMenu {
   constructor() {
-    this.items = ['몬스터', 'BOX', '도감', '증표', '퀘스트', '가방', '지도', '저장', '설정', '타기', '클라우드', '나가기'];
+    this.items = ['몬스터', 'BOX', '도감', '증표', '퀘스트', '업적', '가방', '지도', '저장', '설정', '타기', '클라우드', '나가기'];
     this.cursor = new MenuCursor(this.items.length);
   }
   update(dt, game) {
@@ -6702,21 +6871,22 @@ class MainMenu {
       case 2: game.push(new DexMenu()); break;
       case 3: game.push(new BadgeDexMenu()); break;
       case 4: game.push(new QuestMenu()); break;
-      case 5: game.push(new BagMenu()); break;
-      case 6: game.push(new WorldMapMenu()); break;
-      case 7: game.confirmSave(); break;
-      case 8: game.push(new SettingsMenu()); break;
-      case 9:
+      case 5: game.push(new AchievementTitleMenu()); break;
+      case 6: game.push(new BagMenu()); break;
+      case 7: game.push(new WorldMapMenu()); break;
+      case 8: game.confirmSave(); break;
+      case 9: game.push(new SettingsMenu()); break;
+      case 10:
         if (game.isMounted()) {
           if (game.dismount(false,true)) game.pop();
         } else {
           game.push(new MountMenu(game));
         }
         break;
-      case 10:
+      case 11:
         cloud.open(game);
         break;
-      case 11:
+      case 12:
         game.push(new Dialogue('현재 진행을 저장하고 게임을 종료하여 시작화면으로 돌아갈까요?', {
           choices:[{label:'취소',value:false},{label:'나가기',value:true}],
           onChoose:(v)=>{ if(v) game.returnToTitle(); },
@@ -6730,15 +6900,17 @@ class MainMenu {
     this.items.forEach((it, i) => {
       const y = 14 + i * 14;
       if (this.cursor.i === i) sc.cursor(107, y + 2);
-      const label=(i===9 && game.isMounted()) ? '내리기' : it;
+      const label=(i===10 && game.isMounted()) ? '내리기' : it;
       sc.text(label, 114, y, { size: 9, maxW:38, minSize:6 });
     });
-    sc.box(3, 6, 94, 40);
+    refreshAchievements(game);
+    sc.box(3, 6, 94, 54);
     sc.text(game.world.map.name, 10, 11, { size: 9, weight: '700', maxW: 80 });
     sc.text(`소지금 ${game.state.money.toLocaleString()}원`, 10, 23, { size: 7, color: COL.dim, maxW: 80 });
+    sc.text(`칭호 ${activeTitleLabel(game)}`,10,34,{size:6.5,color:'#8a631b',weight:'700',maxW:80,minSize:5});
     if (game.isMounted()) {
       const m=game.mountedMonster();
-      sc.text(`탑승 ${displayName(m)}`,10,34,{size:6.5,color:COL.accent,maxW:80});
+      sc.text(`탑승 ${displayName(m)}`,10,45,{size:6,color:COL.accent,maxW:80,minSize:5});
     }
   }
 }
@@ -6795,7 +6967,24 @@ class QuestMenu {
   update(dt, game) {
     const d = game.input.freshDirection();
     if (d && this.cursor.move(d)) sfx.blip();
-    if (game.input.pressed('b')) { sfx.cancel(); game.pop(); }
+    if (game.input.pressed('b')) { sfx.cancel(); game.pop(); return; }
+    if (game.input.pressed('a')) {
+      const id = this.ids[this.cursor.i];
+      const st = game.state.quests?.[id]?.status || 'none';
+      if (st !== 'active') {
+        sfx.deny();
+        game.toast(st === 'done' ? '이미 완료한 퀘스트입니다.' : '먼저 의뢰인에게 수락하세요.');
+        return;
+      }
+      if (game.state.trackedQuest === id) {
+        game.state.trackedQuest = null;
+        game.toast('퀘스트 추적 해제');
+      } else {
+        game.state.trackedQuest = id;
+        game.toast(`추적: ${QUESTS[id].name}`);
+      }
+      sfx.confirm();
+    }
     void dt;
   }
   drawUI(sc, game) {
@@ -6814,8 +7003,9 @@ class QuestMenu {
       const st = game.state.quests?.[id]?.status || 'none';
       const y = 32 + k * 25;
       if (this.cursor.i === i) { sc.panel(9, y - 2, 142, 22, '#e8e2f4'); sc.cursor(4, y + 6); }
-      const mark = st === 'done' ? '✓' : st === 'active' ? '◆' : '◇';
-      const stateText = st === 'done' ? '완료' : st === 'active' ? '진행 중' : '미수락';
+      const tracked = game.state.trackedQuest === id && st === 'active';
+      const mark = st === 'done' ? '✓' : tracked ? '★' : st === 'active' ? '◆' : '◇';
+      const stateText = st === 'done' ? '완료' : tracked ? '추적 중' : st === 'active' ? '진행 중' : '미수락';
       sc.text(mark, 15, y + 3, { size:8, color:st === 'done' ? COL.hp : COL.accent });
       sc.text(q.name, 29, y, { size:8, weight:'700', maxW:116 });
       sc.text(`${q.town} · ${q.giver} · ${stateText}`, 29, y + 11, { size:6, color:COL.dim, maxW:116 });
@@ -6827,11 +7017,73 @@ class QuestMenu {
 
     const q = QUESTS[this.ids[this.cursor.i]];
     if (q) {
-      sc.panel(10, 160, 140, 36, '#efece2');
-      sc.wrap(q.desc, 130, 7).slice(0, 3).forEach((line,i)=>sc.text(line,15,165+i*9,{size:7}));
+      const st = game.state.quests?.[q.id]?.status || 'none';
+      sc.panel(10, 158, 140, 40, '#efece2');
+      sc.wrap(q.desc, 130, 6.5).slice(0, 2).forEach((line,i)=>sc.text(line,15,163+i*8,{size:6.5}));
+      if (st === 'active') {
+        const prog = game.questComplete(q) ? '목표 완료 · 의뢰인에게 돌아가기' : game.questProgressText(q);
+        sc.text(prog,15,181,{size:6.5,color:game.questComplete(q)?COL.hp:COL.accent,maxW:130,minSize:5});
+      }
     }
-    sc.text('의뢰인에게 말을 걸어 수락/완료', 80, 199, { size:6, align:'center', color:COL.dim });
-    sc.text('B 뒤로', 80, 208, { size:7, align:'center', color:COL.dim });
+    sc.text('A 진행 퀘스트 추적/해제   B 뒤로', 80, 207, { size:6.5, align:'center', color:COL.dim });
+  }
+}
+
+
+// ============================================================
+// v0.9.0 업적 · 칭호
+// ============================================================
+class AchievementTitleMenu {
+  constructor() {
+    this.cursor = new MenuCursor(Math.max(1, ACHIEVEMENTS.length));
+    this.synced = false;
+  }
+  update(dt, game) {
+    if (!this.synced) {
+      const newly = refreshAchievements(game);
+      if (newly.length) game.toast(`새 업적 ${newly.length}개 해금!`);
+      this.synced = true;
+    }
+    const d = game.input.freshDirection();
+    if (d && this.cursor.move(d)) sfx.blip();
+    if (game.input.pressed('b')) { sfx.cancel(); game.pop(); return; }
+    if (!game.input.pressed('a')) return;
+    const a = ACHIEVEMENTS[this.cursor.i];
+    if (!a || !game.state.achievements?.[a.id]) {
+      sfx.deny(); game.toast('아직 달성하지 않은 업적입니다.'); return;
+    }
+    game.state.activeTitle = a.title;
+    sfx.confirm();
+    game.autoSave(`칭호 '${a.title}' 장착 · 자동 저장`);
+  }
+  drawUI(sc, game) {
+    refreshAchievements(game);
+    sc.box(4, 6, 152, 212);
+    sc.text('업적 · 칭호', 12, 12, {size:10,weight:'700',color:COL.accent});
+    const unlocked = ACHIEVEMENTS.filter((a)=>!!game.state.achievements?.[a.id]).length;
+    sc.text(`${unlocked}/${ACHIEVEMENTS.length}`,148,14,{size:7,align:'right',color:COL.dim});
+    sc.text(`현재 칭호: ${activeTitleLabel(game)}`,12,26,{size:7,weight:'700',color:'#8a631b',maxW:136,minSize:5});
+
+    const rows = 5;
+    const start = Math.max(0, Math.min(this.cursor.i-2, Math.max(0, ACHIEVEMENTS.length-rows)));
+    for (let k=0;k<Math.min(rows,ACHIEVEMENTS.length);k++) {
+      const i=start+k, a=ACHIEVEMENTS[i];
+      const got=!!game.state.achievements?.[a.id];
+      const active=got && game.state.activeTitle===a.title;
+      const y=43+k*25;
+      if (this.cursor.i===i) { sc.panel(9,y-2,142,22,'#e8e2f4'); sc.cursor(4,y+6); }
+      sc.text(active?'●':got?'✓':'◇',15,y+3,{size:8,color:active?'#b48a18':got?COL.hp:COL.shade});
+      sc.text(a.name,29,y,{size:8,weight:'700',color:got?COL.ink:COL.shade,maxW:112});
+      sc.text(got?`칭호 · ${a.title}`:a.progress(game),29,y+11,{size:6,color:got?COL.accent:COL.dim,maxW:112,minSize:5});
+    }
+
+    const a=ACHIEVEMENTS[this.cursor.i];
+    if (a) {
+      sc.panel(10,171,140,28,'#efece2');
+      sc.wrap(a.desc,130,6.5).slice(0,2).forEach((line,i)=>sc.text(line,15,176+i*8,{size:6.5}));
+      if (!game.state.achievements?.[a.id]) sc.text(a.progress(game),145,190,{size:6,align:'right',color:COL.dim,maxW:125,minSize:5});
+    }
+    sc.text('A 해금 칭호 장착   B 뒤로',80,207,{size:6.5,align:'center',color:COL.dim});
   }
 }
 
@@ -6907,6 +7159,7 @@ class PartyMenu {
     const i = this.cursor.i;
     const items = [{ label: '상세보기', key: 'detail' }];
     const m = game.state.party[i];
+    items.push({ label: m?.equipment ? '장비변경' : '장비장착', key: 'equip' });
     if (m && (m.moves || []).length > 1) items.push({ label: '기술순서', key: 'moves' });
     if (i !== 0) items.push({ label: '선두로', key: 'lead' });
     if (i > 0) items.push({ label: '위로', key: 'up' });
@@ -6943,6 +7196,7 @@ class PartyMenu {
       if (key === 'cancel') { sfx.cancel(); return; }
       sfx.confirm();
       if (key === 'detail') { game.push(new MonsterDetail(party[i])); return; }
+      if (key === 'equip') { game.push(new EquipmentMenu(party[i])); return; }
       if (key === 'moves') { game.push(new MoveOrderMenu(party[i])); return; }
       if (key === 'release') {
         if (party.length <= 1) {
@@ -6956,6 +7210,10 @@ class PartyMenu {
             const idx = game.state.party.findIndex((m) => m.sid === target.sid);
             if (idx < 0 || game.state.party.length <= 1) return;
             const [gone] = game.state.party.splice(idx, 1);
+            if (gone?.equipment) {
+              game.addItem(gone.equipment, 1);
+              gone.equipment = null;
+            }
             this.cursor.i = Math.max(0, Math.min(this.cursor.i, game.state.party.length - 1));
             game.world.follower.visible = !!game.state.party.length;
             this.notice = `${displayName(gone)}을(를) 놓아주었다.`;
@@ -7055,6 +7313,77 @@ class PartyMenu {
   }
 }
 
+
+// ============================================================
+// v0.9.0 몬스터 장비
+// ============================================================
+class EquipmentMenu {
+  constructor(inst) {
+    this.m = inst;
+    this.cursor = new MenuCursor(1);
+  }
+  list(game) {
+    const rows = [{ id:null, name:'장비 해제', desc:'현재 장비를 가방으로 돌려보낸다.' }];
+    for (const id of EQUIPMENT_IDS) {
+      const n = game.countItem(id);
+      if (n > 0 || this.m.equipment === id) {
+        rows.push({ id, name:ITEMS[id].name, desc:ITEMS[id].desc, n });
+      }
+    }
+    return rows;
+  }
+  update(dt, game) {
+    const list=this.list(game);
+    this.cursor.set(Math.max(1,list.length));
+    const d=game.input.freshDirection();
+    if (d && this.cursor.move(d)) sfx.blip();
+    if (game.input.pressed('b')) { sfx.cancel(); game.pop(); return; }
+    if (!game.input.pressed('a')) return;
+    const row=list[this.cursor.i];
+    if (!row) return;
+    if (!row.id) {
+      if (!this.m.equipment) { sfx.deny(); game.toast('장착 중인 장비가 없습니다.'); return; }
+      sfx.confirm();
+      game.unequipItem(this.m);
+      this.cursor.i=0;
+      return;
+    }
+    if (this.m.equipment===row.id) {
+      sfx.deny(); game.toast('이미 장착 중인 장비입니다.'); return;
+    }
+    if (game.countItem(row.id)<=0) {
+      sfx.deny(); game.toast('가방에 해당 장비가 없습니다.'); return;
+    }
+    sfx.confirm();
+    game.equipItem(this.m,row.id);
+  }
+  drawUI(sc, game) {
+    const list=this.list(game);
+    sc.box(5,7,150,208);
+    sc.text('몬스터 장비',80,13,{size:10,weight:'700',align:'center',color:COL.accent});
+    sc.text(displayName(this.m),12,29,{size:8,weight:'700',maxW:82,minSize:5});
+    const current=this.m.equipment ? ITEMS[this.m.equipment]?.name : '없음';
+    sc.text(`현재: ${current}`,148,29,{size:6.5,align:'right',color:'#8a631b',maxW:62,minSize:4.5});
+
+    const rows=6;
+    const start=Math.max(0,Math.min(this.cursor.i-2,Math.max(0,list.length-rows)));
+    for(let k=0;k<Math.min(rows,list.length);k++){
+      const i=start+k,row=list[i],y=48+k*22,sel=this.cursor.i===i;
+      sc.panel(12,y,136,19,sel?'#e8e2f4':'#efece2');
+      if(sel) sc.cursor(6,y+5);
+      if(row.id) sc.hqFit(assets.itemIcon(row.id),18,y+2,14,14,{ay:0.5});
+      sc.text(row.name,row.id?38:26,y+3,{size:7.5,weight:'700',maxW:78,minSize:5});
+      if(row.id) sc.text(this.m.equipment===row.id?'장착 중':`×${game.countItem(row.id)}`,143,y+4,{size:6.5,align:'right',color:this.m.equipment===row.id?COL.accent:COL.dim});
+    }
+    const row=list[this.cursor.i];
+    if(row){
+      sc.panel(10,181,140,20,'#efece2');
+      sc.wrap(row.desc,130,6.2).slice(0,2).forEach((line,i)=>sc.text(line,15,185+i*7,{size:6.2}));
+    }
+    sc.text('A 장착/해제   B 뒤로',80,207,{size:6.5,align:'center',color:COL.dim});
+  }
+}
+
 // ============================================================
 // 몬스터 상세
 // ============================================================
@@ -7097,17 +7426,24 @@ class MonsterDetail {
     sc.text('성격',76,90,{size:8,color:COL.dim}); sc.text(nature.name,146,90,{size:7,align:'right'});
     sc.text('잠재력',14,103,{size:8,color:COL.dim}); sc.text(stars,62,103,{size:7,align:'right',color:'#b48a18'});
     sc.text('상태',76,103,{size:8,color:COL.dim}); sc.text(m.status ? STATUS_NAMES[m.status] : '정상',146,103,{size:7,align:'right',color:m.status?COL.hpLow:COL.hp});
-    sc.text('EXP',14,116,{size:8,color:COL.dim}); sc.bar(38,117,60,5,m.exp/m.expToNext,COL.exp); sc.text(`${m.exp}/${m.expToNext}`,146,116,{size:7,align:'right',color:COL.dim});
-    sc.text('진화',14,129,{size:8,color:COL.dim}); sc.text(sp.evolution ? `Lv.${sp.evolution.level} → ${MONSTERS[sp.evolution.to].name}` : '최종 단계',146,129,{size:7,align:'right',color:sp.evolution?COL.ink:COL.dim,maxW:72,minSize:5});
+    const eq = m.equipment ? ITEMS[m.equipment] : null;
+    sc.text('장비',14,116,{size:8,color:COL.dim});
+    if (eq) {
+      sc.hqFit(assets.itemIcon(m.equipment),40,113,10,10,{ay:0.5});
+      sc.text(eq.name,54,116,{size:7,weight:'700',color:'#8a631b',maxW:92,minSize:5});
+    } else sc.text('없음',46,116,{size:7,color:COL.dim});
 
-    sc.text('기술',14,142,{size:8,weight:'700',color:COL.accent}); sc.text(`${m.moves.length}/${MOVE_MAX}`,146,142,{size:7,align:'right',color:COL.dim});
+    sc.text('EXP',14,129,{size:8,color:COL.dim}); sc.bar(38,130,60,5,m.exp/m.expToNext,COL.exp); sc.text(`${m.exp}/${m.expToNext}`,146,129,{size:7,align:'right',color:COL.dim});
+    sc.text('진화',14,141,{size:8,color:COL.dim}); sc.text(sp.evolution ? `Lv.${sp.evolution.level} → ${MONSTERS[sp.evolution.to].name}` : '최종 단계',146,141,{size:7,align:'right',color:sp.evolution?COL.ink:COL.dim,maxW:72,minSize:5});
+
+    sc.text('기술',14,153,{size:8,weight:'700',color:COL.accent}); sc.text(`${m.moves.length}/${MOVE_MAX}`,146,153,{size:7,align:'right',color:COL.dim});
     for (let i=0;i<MOVE_MAX;i++) {
-      const y=154+i*13, mid=m.moves[i]; sc.panel(10,y,140,12,'#efece2');
-      if (!mid) { sc.text('—',80,y+2,{size:7,align:'center',color:COL.shade}); continue; }
-      const mv=MOVES[mid]; sc.panel(13,y+2,22,8,TYPE_COLORS[mv.type]||'#888'); sc.text(mv.type,24,y+3,{size:5,align:'center',color:'#fff'});
-      sc.text(mv.name,40,y+2,{size:7,maxW:68,minSize:5}); sc.text(mv.power ? `위력 ${mv.power}` : '보조',146,y+2,{size:6,align:'right',color:COL.dim});
+      const y=163+i*11, mid=m.moves[i]; sc.panel(10,y,140,10,'#efece2');
+      if (!mid) { sc.text('—',80,y+1,{size:6.5,align:'center',color:COL.shade}); continue; }
+      const mv=MOVES[mid]; sc.panel(13,y+1,22,8,TYPE_COLORS[mv.type]||'#888'); sc.text(mv.type,24,y+2,{size:5,align:'center',color:'#fff'});
+      sc.text(mv.name,40,y+1,{size:6.5,maxW:68,minSize:4.8}); sc.text(mv.power ? `위력 ${mv.power}` : '보조',146,y+1,{size:5.5,align:'right',color:COL.dim});
     }
-    sc.text('A/B 뒤로',80,208,{size:7,align:'center',color:COL.dim}); void game;
+    sc.text('A/B 뒤로',80,209,{size:6.5,align:'center',color:COL.dim}); void game;
   }
 }
 
@@ -7505,7 +7841,7 @@ class DexDetail {
 // ============================================================
 // 가방
 // ============================================================
-const BAG_CATEGORIES = ['포획', '회복', '기타'];
+const BAG_CATEGORIES = ['포획', '회복', '장비', '기타'];
 
 class BagMenu {
   constructor() { this.tab = 0; this.cursor = new MenuCursor(1); }
@@ -7534,10 +7870,11 @@ class BagMenu {
     sc.box(3, 6, 154, 212);
     sc.text('가방', 12, 12, { size: 10, weight: '700', color: COL.accent });
     sc.text(`${game.state.money.toLocaleString()}원`, 148, 14, { size: 8, align: 'right', color: COL.dim, maxW:80, minSize:6 });
+    const tabGap=2, tabW=Math.floor((136-tabGap*(BAG_CATEGORIES.length-1))/BAG_CATEGORIES.length);
     BAG_CATEGORIES.forEach((c, i) => {
-      const x = 12 + i * 46;
-      sc.panel(x, 28, 42, 14, i === this.tab ? COL.accent : '#d8d3c6');
-      sc.text(c, x + 21, 31, { size: 8, align: 'center', color: i === this.tab ? '#fff' : COL.dim });
+      const x = 12 + i * (tabW + tabGap);
+      sc.panel(x, 28, tabW, 14, i === this.tab ? COL.accent : '#d8d3c6');
+      sc.text(c, x + tabW/2, 31, { size: 7, align: 'center', color: i === this.tab ? '#fff' : COL.dim, maxW:tabW-4,minSize:5.5 });
     });
     const list = this.list(game);
     if (!list.length) { sc.text('아무것도 없다.', 14, 54, { size: 9, color: COL.dim }); return; }
@@ -8036,6 +8373,7 @@ class GameManualScene {
       {title:'5. 도감 · 수집 보상', lines:[
         '미발견 몬스터도 도감에서 이름·이미지·상세 정보를 미리 볼 수 있습니다.',
         '도감의 미발견/발견/포획 상태는 따로 표시되며 보상 계산은 실제 포획한 종만 인정합니다.',
+        '메뉴의 업적에서 달성 현황을 확인하고, 해금된 칭호를 골라 장착할 수 있습니다.',
         '포획 10/20/30/40/50종 달성 시 단계별 보상을 받을 수 있습니다.',
         '도감 완성 보상: 마스터캡슐 ×4 + 500,000원',
         '모든 지역 체육관 증표 완성 보상: 마스터캡슐 ×2',
@@ -8045,12 +8383,14 @@ class GameManualScene {
         'SP 물약은 일반(+40), 고급(+100), 최고급(최대치) 3종이며 필드와 전투에서 사용할 수 있습니다.',
         '회복약·부활약·캡슐·기술CD·레벨업사탕·귀환주문서·달콤열매 등을 상점에서 구매할 수 있습니다.',
         '상점은 아이템 구매와 판매를 모두 지원합니다.',
+        '장비 5종을 구매해 몬스터 1마리당 1개씩 장착할 수 있으며 HP·공격·방어·속도·SP를 강화합니다.',
         '야외 필드에는 랜덤 드랍 아이템이 생성되며 직접 접근해 획득할 수 있습니다.',
         '자동줍기권은 상점에서 100,000원에 판매되며 한 번 구매하면 영구 적용됩니다.',
         '자동줍기 활성화 시 플레이어 주변 2칸의 랜덤 드랍 아이템을 자동으로 수거합니다.'
       ]},
       {title:'7. 탐험 · 탑승 · 특수 몬스터', lines:[
         '7개 지역에는 체육관, NPC 퀘스트, 숨겨진 지역, 필드 우두머리와 전설·환상 몬스터가 있습니다.',
+        '퀘스트 메뉴에서 A를 누르면 진행 중 퀘스트를 추적하며 필드 화면에 목표와 진행도가 표시됩니다.',
         '파티의 전설 몬스터는 타기/내리기로 육상 탑승할 수 있으며 이동 속도가 증가합니다.',
         '물가에서 A를 누르면 파티의 물 타입 몬스터를 타고 수면을 이동할 수 있습니다.',
         '성운령은 별안개평원·몽환구릉, 여명조는 여명초원·천공능선에서 희귀하게 등장합니다.',
@@ -8061,6 +8401,7 @@ class GameManualScene {
         '시작화면 또는 메뉴의 클라우드 계정에서 이메일과 비밀번호로 회원가입·로그인할 수 있습니다.',
         '같은 계정으로 로그인하면 PC와 모바일 APK가 하나의 클라우드 세이브를 함께 사용합니다.',
         '로그인 상태에서 게임을 저장하면 로컬 저장과 클라우드 저장이 함께 진행됩니다.',
+        '필드 오른쪽 아래의 ☁ 표시로 저장 대기·저장 중·동기화 완료·연결 오류 상태를 확인할 수 있습니다.',
         '게임 실행·로그인 시 기기와 클라우드의 저장 시간을 비교해 더 최신인 데이터를 동기화합니다.',
         '필요하면 지금 동기화 / 이 기기→클라우드 / 클라우드→이 기기 버튼으로 수동 선택할 수 있습니다.',
         '두 기기에서 동시에 플레이하면 마지막 저장이 우선될 수 있으므로 기기를 바꾸기 전에 한 번 저장하는 것을 권장합니다.'
@@ -8087,6 +8428,7 @@ class GameManualScene {
         'v0.8.0 이메일 계정 로그인 + PC/모바일 공용 클라우드 세이브 추가',
         'v0.8.0 저장 시 로컬·클라우드 동시 저장 + 최신 저장 자동 동기화 추가',
         'v0.8.1 모바일 클라우드 창이 배경 터치로 닫히는 현상 수정',
+        'v0.9.0 퀘스트 추적 + 업적/칭호 + 몬스터 장비 + 클라우드 동기화 상태 표시 추가',
         '게임 수정 후에도 동일 계정의 세이브 데이터를 계속 이어서 사용할 수 있도록 구성되어 있습니다.'
       ]},
     ];
@@ -9531,6 +9873,9 @@ class Game {
       mount: null,
       upgrades: { autoPickup:false },
       quests: {},
+      trackedQuest: null,
+      achievements: {},
+      activeTitle: '신입 모험가',
       badges: {},
       collectionRewards: { dexComplete: false, badgeComplete: false, dexMilestones: {} },
       progress: { starter: false, visitedLab: false },
@@ -9609,6 +9954,9 @@ class Game {
     if (!this.state.collectionRewards) this.state.collectionRewards = { dexComplete: false, badgeComplete: false, dexMilestones: {} };
     if (!this.state.collectionRewards.dexMilestones) this.state.collectionRewards.dexMilestones = {};
     if (!this.state.quests) this.state.quests = {};
+    if (this.state.trackedQuest === undefined) this.state.trackedQuest = null;
+    if (!this.state.achievements) this.state.achievements = {};
+    if (!this.state.activeTitle) this.state.activeTitle = '신입 모험가';
     if (!this.state.trainerRematch) this.state.trainerRematch = {};
     if (!this.state.fieldBossRespawn) this.state.fieldBossRespawn = {};
     if (!this.state.discoveredMaps) this.state.discoveredMaps = {};
@@ -9765,6 +10113,22 @@ class Game {
       sc.panel(80 - w / 2, 28, w, sub ? 31 : 23, `rgba(18,18,30,${0.88 * a})`);
       sc.text(title, 80, 34, { size: 11, weight: '700', align: 'center', color: '#f7f3e7' });
       if (sub) sc.text(sub, 80, 48, { size: 7, align: 'center', color: '#bfc3d8' });
+    }
+    if (this.mode === 'field' && !this.overlays.length) {
+      const qid = this.state.trackedQuest;
+      const q = qid ? QUESTS[qid] : null;
+      const st = qid ? this.state.quests?.[qid]?.status : null;
+      if (q && st === 'active') {
+        const done = this.questComplete(q);
+        const prog = done ? '목표 완료 · 의뢰인에게 돌아가기' : this.questProgressText(q);
+        sc.panel(4,174,152,27,'rgba(18,18,30,0.84)');
+        sc.text(`★ ${q.name}`,9,178,{size:6.5,weight:'700',color:'#f1d46a',maxW:142,minSize:5});
+        sc.text(prog,9,189,{size:6,color:done?COL.hp:'#d8dbe8',maxW:142,minSize:4.6});
+      }
+      const ct = cloud.hudText();
+      const cw = Math.min(72, Math.max(46, sc.textWidth(ct, 5.5) + 10));
+      sc.panel(156-cw,205,cw,12,'rgba(18,18,30,0.78)');
+      sc.text(ct,151,208,{size:5.5,align:'right',color:/오류/.test(ct)?COL.hpLow:/완료/.test(ct)?COL.hp:COL.dim,maxW:cw-6,minSize:4.5});
     }
     if (this.toastMsg && this.toastMsg.t > 0) {
       const w = Math.min(150, sc.textWidth(this.toastMsg.text, 8) + 16);
@@ -9992,6 +10356,11 @@ class Game {
       this.state.money += reward.money || 0;
       for (const [id, n] of Object.entries(reward.items || {})) this.addItem(id, n);
       this.state.quests[q.id] = { status:'done', completedAt:Date.now() };
+      if (this.state.trackedQuest === q.id) {
+        const next = Object.keys(QUESTS).find((id)=>this.state.quests?.[id]?.status==='active');
+        this.state.trackedQuest = next || null;
+      }
+      refreshAchievements(this);
       sfx.caught();
       const parts = [];
       if (reward.money) parts.push(`${reward.money.toLocaleString()}원`);
@@ -10005,7 +10374,8 @@ class Game {
       onChoose:(v)=>{
         if (!v) return;
         this.state.quests[q.id] = { status:'active', acceptedAt:Date.now() };
-        this.say('퀘스트가 등록되었다!');
+        if (!this.state.trackedQuest) this.state.trackedQuest = q.id;
+        this.say(['퀘스트가 등록되었다!', `추적 시작: ${q.name}`]);
       },
     });
   }
@@ -10143,6 +10513,29 @@ class Game {
   removeItem(id, n = 1) {
     this.state.bag[id] = Math.max(0, (this.state.bag[id] || 0) - n);
     if (this.state.bag[id] === 0) delete this.state.bag[id];
+  }
+
+  equipItem(inst, id) {
+    const item = ITEMS[id];
+    if (!inst || !item?.equip || this.countItem(id) <= 0) return false;
+    const old = inst.equipment || null;
+    if (old === id) return false;
+    if (old) this.addItem(old, 1);
+    this.removeItem(id, 1);
+    inst.equipment = id;
+    normalizeInstance(inst);
+    this.autoSave(`${displayName(inst)} · ${item.name} 장착`);
+    return true;
+  }
+
+  unequipItem(inst) {
+    if (!inst?.equipment) return false;
+    const old = inst.equipment;
+    this.addItem(old, 1);
+    inst.equipment = null;
+    normalizeInstance(inst);
+    this.autoSave(`${displayName(inst)} · 장비 해제`);
+    return true;
   }
 
   autoPickupFieldItems(radius = 2) {
@@ -10317,6 +10710,17 @@ class Game {
 
   useItemInField(id) {
     const item = ITEMS[id];
+    if (item?.equip) {
+      this.push(new PartyMenu({
+        mode:'select', title:'누구에게 장착할까?',
+        onSelect:(m)=>{
+          if (m.equipment === id) { sfx.deny(); this.say(`${displayName(m)}은(는) 이미 ${item.name}을(를) 장착 중이다.`); return; }
+          if (!this.equipItem(m,id)) { sfx.deny(); this.say('장비를 장착할 수 없다.'); return; }
+          this.say(`${displayName(m)}에게 ${item.name}을(를) 장착했다!`);
+        },
+      }));
+      return;
+    }
     if (item.levelUp) {
       this.push(new PartyMenu({
         mode: 'select', title: '누구에게 먹일까?',
