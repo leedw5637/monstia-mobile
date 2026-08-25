@@ -4906,6 +4906,7 @@ const MONSTIA_SUPABASE_DEFAULT = Object.freeze({
   url: 'https://lpixnrsdyqpoqvleuzpj.supabase.co',
   key: 'sb_publishable_iYJSJVrUj5KMSTdhmMe5Vg_AYY0DdcJ',
 });
+const MONSTIA_AUTH_REDIRECT_URL = 'https://leedw5637.github.io/monstia-mobile/auth.html';
 
 const cloud = {
   config: null,
@@ -5040,7 +5041,7 @@ const cloud = {
   },
 
   async signUp(email, password) {
-    const data = await this.request('/auth/v1/signup', {
+    const data = await this.request(`/auth/v1/signup?redirect_to=${encodeURIComponent(MONSTIA_AUTH_REDIRECT_URL)}`, {
       method:'POST', body:{ email:String(email||'').trim(), password:String(password||'') }
     });
     if (data?.access_token) {
@@ -5050,7 +5051,7 @@ const cloud = {
       return { loggedIn:true, message:'회원가입과 로그인이 완료되었습니다.' };
     }
     this.lastMessage = '이메일 인증 대기';
-    return { loggedIn:false, message:'회원가입 완료. 이메일 인증 후 로그인해 주세요.' };
+    return { loggedIn:false, message:'회원가입 완료. 인증메일의 링크를 누르면 MONSTIA 인증 완료 페이지로 이동합니다. 인증 후 게임으로 돌아와 로그인해 주세요.' };
   },
 
   async signIn(email, password) {
