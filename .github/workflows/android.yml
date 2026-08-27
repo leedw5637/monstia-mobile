@@ -29,12 +29,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          for f in game.part01 game.part02 game.part03 "apk아이콘.png"; do
-            if [ ! -f "$GITHUB_WORKSPACE/$f" ]; then
-              echo "::error::$f 파일이 저장소 최상단에 없습니다."
-              exit 1
-            fi
-          done
+          if [ ! -f "$GITHUB_WORKSPACE/apk아이콘.png" ]; then
+            echo "::error::apk아이콘.png 파일이 저장소 최상단에 없습니다."
+            exit 1
+          fi
+
+          mapfile -t GAME_PARTS < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name 'game.part*' | sort)
+          if [ "${#GAME_PARTS[@]}" -lt 1 ]; then
+            echo "::error::game.part* 분할 게임 파일이 없습니다."
+            exit 1
+          fi
+          echo "게임 분할파일 ${#GAME_PARTS[@]}개 확인 완료"
 
       - name: MONSTIA Android 프로젝트 자동 생성
         shell: bash
@@ -53,13 +58,17 @@ jobs:
             "$MAIN/res/values" \
             "$MAIN/res/xml"
 
-          cat \
-            "$GITHUB_WORKSPACE/game.part01" \
-            "$GITHUB_WORKSPACE/game.part02" \
-            "$GITHUB_WORKSPACE/game.part03" \
-            > "$MAIN/assets/game.html"
+          mapfile -t GAME_PARTS < <(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name 'game.part*' | sort)
+          cat "${GAME_PARTS[@]}" > "$MAIN/assets/game.html"
 
           GAME_SHA256=$(sha256sum "$MAIN/assets/game.html" | awk '{print $1}')
+          EXPECTED_GAME_SHA256="1cd0f98512529e93c0a7b0a9c0285cc864b3768207fff00677ee704b9bffaea9"
+          if [ "$GAME_SHA256" != "$EXPECTED_GAME_SHA256" ]; then
+            echo "::error::분할 게임 파일 복원 SHA-256이 일치하지 않습니다."
+            echo "actual=$GAME_SHA256"
+            echo "expected=$EXPECTED_GAME_SHA256"
+            exit 1
+          fi
           GAME_VERSION=$(python3 - "$MAIN/assets/game.html" <<'PY'
           import re, sys
           text = open(sys.argv[1], "r", encoding="utf-8", errors="ignore").read()
@@ -127,8 +136,8 @@ jobs:
                   applicationId = "com.monstia.game"
                   minSdk = 24
                   targetSdk = 35
-                  versionCode = 2
-                  versionName = "$GAME_VERSION-shell2"
+                  versionCode = 4
+                  versionName = "$GAME_VERSION-shell4"
 
                   buildConfigField("String", "BUNDLED_GAME_VERSION", "\\"$GAME_VERSION\\"")
                   buildConfigField(
@@ -199,6 +208,7 @@ jobs:
                       android:name=".MainActivity"
                       android:configChanges="orientation|screenSize|keyboardHidden"
                       android:screenOrientation="portrait"
+                      android:windowSoftInputMode="adjustResize"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
@@ -319,6 +329,10 @@ jobs:
                               WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
                               WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
                       );
+                      // HTML input(로그인 이메일/비밀번호)에서 소프트 키보드가 안정적으로 유지되도록 함.
+                      getWindow().setSoftInputMode(
+                              WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                      );
 
                       buildShell();
                       showStatus("MONSTIA 로딩 중…");
@@ -431,8 +445,12 @@ jobs:
                   try {
                       showStatus("게임 화면 준비 중…");
 
-                      webView = new WebView(getApplicationContext());
+                      // Activity context를 사용해야 WebView의 입력창/키보드 포커스가 안정적으로 동작한다.
+                      webView = new WebView(this);
                       webView.setBackgroundColor(Color.BLACK);
+                      webView.setFocusable(true);
+                      webView.setFocusableInTouchMode(true);
+                      webView.requestFocus(View.FOCUS_DOWN);
 
                       WebSettings s = webView.getSettings();
                       s.setJavaScriptEnabled(true);
@@ -869,8 +887,8 @@ jobs:
             "gameVersion": "$GAME_VERSION",
             "gameUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/android-latest/MONSTIA_latest.html",
             "sha256": "$GAME_SHA256",
-            "apkVersionCode": 2,
-            "apkVersionName": "$GAME_VERSION-shell2",
+            "apkVersionCode": 4,
+            "apkVersionName": "$GAME_VERSION-shell4",
             "apkUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/android-latest/MONSTIA.apk"
           }
           EOF
