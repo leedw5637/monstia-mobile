@@ -4730,7 +4730,7 @@ const sfx = new Sfx();
 
 const KEY = 'monstia.save.slot1';
 const BACKUP_KEY = 'monstia.save.slot1.backup';
-const SAVE_VERSION = 19;
+const SAVE_VERSION = 20;
 
 // v(n) -> v(n+1) 변환 함수들. 예: MIGRATIONS[1] = (d) => {...; return d;}
 const MIGRATIONS = {
@@ -5466,7 +5466,7 @@ globalThis.MONSTIA_CLOUD = cloud;
 // UI 좌표는 모두 "가상 좌표(160x224)" 기준이며 내부에서 scale 을 곱한다.
 // ============================================================
 
-const GAME_VERSION = '1.0.2';
+const GAME_VERSION = '1.0.3';
 const VW = 160;
 const VH = 224;
 
@@ -5842,7 +5842,7 @@ function evolutionMoveCandidates(inst) {
 function createInstance(id, level, opts = {}) {
   const nature = opts.nature || randomNature();
   const talent = opts.talent || randomTalent();
-  const resonant = opts.resonant !== undefined ? !!opts.resonant : Math.random() < (1 / 777);
+  const resonant = opts.resonant !== undefined ? !!opts.resonant : Math.random() < (1 / 500);
   const equipment = opts.equipment || null;
   const traits = { nature, talent, equipment };
   const st = statsFor(id, level, traits);
@@ -6396,6 +6396,7 @@ class World {
 
   onStepComplete() {
     const p = this.player;
+    if (this.game.v103StepTick) this.game.v103StepTick();
     const warp = this.warpAt(p.tx, p.ty);
     if (warp) { this.game.doWarp(warp); return; }
 
@@ -6404,6 +6405,7 @@ class World {
     if (this.game.state.mount?.mode === 'water' && props.key !== 'water') this.game.dismount(true, false);
     // v7.8: 자동줍기권 보유 시 주변 2칸의 랜덤 드랍을 이동만 해도 수거한다.
     if (this.game.state.upgrades?.autoPickup) this.game.autoPickupFieldItems(2);
+    if (this.game.maybeRareFieldEvent && this.game.maybeRareFieldEvent(this, props)) return;
     if (props.encounter && this.map.encounterTable) {
       this.stepsSinceEncounter++;
       const party = this.game.state.party;
@@ -6971,7 +6973,7 @@ class MountMenu {
 // ============================================================
 class MainMenu {
   constructor() {
-    this.items = ['몬스터', 'BOX', '도감', '증표', '퀘스트', '업적', '가방', '지도', '저장', '설정', '타기', '클라우드', '나가기'];
+    this.items = ['몬스터', 'BOX', '도감', '증표', '퀘스트', '업적', '가방', '지도', '배틀타워', '저장', '설정', '타기', '클라우드', '나가기'];
     this.cursor = new MenuCursor(this.items.length);
   }
   update(dt, game) {
@@ -6989,25 +6991,23 @@ class MainMenu {
       case 5: game.push(new AchievementTitleMenu()); break;
       case 6: game.push(new BagMenu()); break;
       case 7: game.push(new WorldMapMenu()); break;
-      case 8: game.confirmSave(); break;
-      case 9: game.push(new SettingsMenu()); break;
-      case 10:
+      case 8: game.push(new TowerMenu()); break;
+      case 9: game.confirmSave(); break;
+      case 10: game.push(new SettingsMenu()); break;
+      case 11:
         if (game.isMounted()) {
           if (game.dismount(false,true)) game.pop();
-        } else {
-          game.push(new MountMenu(game));
-        }
+        } else game.push(new MountMenu(game));
         break;
-      case 11:
-        cloud.open(game);
-        break;
-      case 12:
+      case 12: cloud.open(game); break;
+      case 13:
         game.push(new Dialogue('현재 진행을 저장하고 게임을 종료하여 시작화면으로 돌아갈까요?', {
           choices:[{label:'취소',value:false},{label:'나가기',value:true}],
           onChoose:(v)=>{ if(v) game.returnToTitle(); },
         }));
         break;
     }
+    void dt;
   }
   drawUI(sc, game) {
     const h = 14 + this.items.length * 14;
@@ -7015,18 +7015,16 @@ class MainMenu {
     this.items.forEach((it, i) => {
       const y = 14 + i * 14;
       if (this.cursor.i === i) sc.cursor(107, y + 2);
-      const label=(i===10 && game.isMounted()) ? '내리기' : it;
-      sc.text(label, 114, y, { size: 9, maxW:38, minSize:6 });
+      const label=(i===11 && game.isMounted()) ? '내리기' : it;
+      sc.text(label, 114, y, { size: 8.5, maxW:38, minSize:5.5 });
     });
     refreshAchievements(game);
     sc.box(3, 6, 94, 54);
     sc.text(game.world.map.name, 10, 11, { size: 9, weight: '700', maxW: 80 });
     sc.text(`소지금 ${game.state.money.toLocaleString()}원`, 10, 23, { size: 7, color: COL.dim, maxW: 80 });
     sc.text(`칭호 ${activeTitleLabel(game)}`,10,34,{size:6.5,color:'#8a631b',weight:'700',maxW:80,minSize:5});
-    if (game.isMounted()) {
-      const m=game.mountedMonster();
-      sc.text(`탑승 ${displayName(m)}`,10,45,{size:6,color:COL.accent,maxW:80,minSize:5});
-    }
+    const best=Number(game.state.tower?.best||0);
+    sc.text(`배틀타워 최고 ${best}층`,10,45,{size:6,color:COL.accent,maxW:80,minSize:5});
   }
 }
 
@@ -8574,7 +8572,7 @@ class GameManualScene {
         '물가에서 A를 누르면 파티의 물 타입 몬스터를 타고 수면을 이동할 수 있습니다.',
         '성운령은 별안개평원·몽환구릉, 여명조는 여명초원·천공능선에서 희귀하게 등장합니다.',
         '아스트라온·아우렐리온은 야생으로 직접 등장하지 않으며 진화를 통해 획득합니다.',
-        '7구간 대륙 골목길에서는 전설·환상을 제외한 일반 몬스터 전 종을 만날 수 있습니다.'
+        '7구간 대륙 골목길에서는 전설·환상을 제외한 일반 몬스터 전 종을 만날 수 있습니다. 희귀 필드 이벤트에서는 엘리트·보물·떠돌이 상인·공명 개체 등을 만날 수 있습니다.'
       ]},
       {title:'8. 클라우드 계정 · PC/모바일 연동', lines:[
         '시작화면 또는 메뉴의 클라우드 계정에서 이메일과 비밀번호로 회원가입·로그인할 수 있습니다.',
@@ -8586,8 +8584,8 @@ class GameManualScene {
         '두 기기에서 동시에 플레이하면 마지막 저장이 우선될 수 있으므로 기기를 바꾸기 전에 한 번 저장하는 것을 권장합니다.'
       ]},
       {title:'9. 저장 · 백업 · 안전하게 이어하기', lines:[
-        '게임 저장은 기기 내부 로컬 저장을 기본으로 하며 이전 저장은 자동 백업으로 한 번 더 보관됩니다.',
-        '시작화면에서 저장 파일 불러오기와 백업 데이터 불러오기를 사용할 수 있습니다.',
+        '게임 저장은 기기 내부 로컬 저장을 기본으로 하며 이전 저장 2단계 백업과 업데이트 직전 스냅샷을 함께 보관합니다.',
+        '주 저장이 손상되면 1차 백업 → 2차 백업 → 업데이트 직전 스냅샷 순서로 복구를 시도합니다.',
         '클라우드 로그인 중이어도 로컬 저장은 함께 남기 때문에 일시적으로 인터넷이 끊겨도 플레이할 수 있습니다.',
         'PC에서 마친 뒤 저장 → 모바일에서 실행·동기화, 또는 그 반대 순서로 이용하면 가장 안전합니다.',
         '클라우드→이 기기를 직접 선택하면 현재 로컬 세이브가 교체되므로 확인 메시지를 꼭 읽어주세요.',
@@ -8596,7 +8594,7 @@ class GameManualScene {
       {title:'10. 확률 · 재등장', lines:[
         '야생 조우 기본 확률: 조우 가능 타일 이동 1칸당 14%',
         '성운령: 전용 지역 조우 시 약 3.09%   ·   여명조: 전용 지역 조우 시 약 3.26%',
-        '공명 개체 출현 확률: 1 / 777 (약 0.129%)',
+        '공명 개체 출현 확률: 1 / 500 (0.2%)',
         '도망 확률: 기본 50% + 재시도당 15% + 레벨 차 보정, 최종 최대 95%',
         '전설 몬스터: 격파 후 10분 / 포획 후 1시간 뒤 현실 시간 기준 재등장',
         '필드 우두머리: 격파 또는 포획 후 30분 뒤 재등장'
@@ -8605,6 +8603,7 @@ class GameManualScene {
         'v7.7 미발견 도감 전체 열람 + SP 물약 3종 추가',
         'v7.8 버프/디버프 잔여턴 표시 + 야생 진화단계 레벨 보정 + 자동줍기권 추가',
         'v0.8.0 이메일 계정 로그인 + PC/모바일 공용 클라우드 세이브 추가',
+        'v1.0.3 희귀 필드 이벤트 · 공명개체 확장 · 100층 배틀타워 · 퀘스트/반복퀘스트/업적 대폭 확장 · 세이브 안전장치',
         'v1.0.0 FINAL: 신규 3마을 전용 체육관/관장 · 퀘스트/업적 확장 · 진화레벨 기준 야생 출현 · 필드드랍 비공개 복구 · 마을 콘셉트 전면 차별화',
         'v1.0.0 대규모 업데이트: 신규 지역 3개 · 일반 몬스터 10계통(30폼) · 제르카온 · 봉인의 열쇠/이동형 히든스테이지 · 은행 · 카지노',
         'v1.0.0 클라우드 저장/불러오기 분리 + 파티 SP 게이지 + 미니 퀘스트 HUD',
@@ -8801,7 +8800,10 @@ class Battle {
       for (const line of (this.trainer.before || [])) this.push({ text: line });
       this.push({ text: `${this.trainer.name}이(가) ${MONSTERS[enemy.id].name} Lv.${enemy.level}을(를) 내보냈다!` });
     } else {
-      this.push({ text: `앗! 야생 ${MONSTERS[enemy.id].name} Lv.${enemy.level}이(가) 튀어나왔다!` });
+      const wildLabel = enemy.elite ? 'ELITE ' : enemy.resonant ? '✦ 공명 ' : '야생 ';
+      this.push({ text: `앗! ${wildLabel}${MONSTERS[enemy.id].name} Lv.${enemy.level}이(가) 튀어나왔다!` });
+      if (enemy.resonant) this.push({ text: '✦ 평범한 개체와 다른 공명 파장이 느껴진다!' });
+      if (enemy.elite) this.push({ text: '강한 기운을 두른 엘리트 개체다!' });
       if ((game.state.dex[enemy.id] || 0) < 2) this.push({ text: '도감에 새로운 몬스터가 기록되었다!' });
     }
     this.push({ text: `가라, ${displayName(this.active)}!` });
@@ -9158,6 +9160,7 @@ class Battle {
     }
     if (t) {
       this.say(`${t.name}과(와)의 승부에서 이겼다!`);
+      if (t.tower) { this.push({ do: () => this.finish('win') }); return; }
       for (const line of (t.lose || [])) this.say(line);
       this.push({ do: () => {
         this.game.state.money += t.reward;
@@ -9603,7 +9606,9 @@ class Battle {
       ctx.save();
       if (this.flash && this.flash.who === 'e' && Math.floor(this.flash.t * 24) % 2) ctx.globalAlpha = 0.25;
       ctx.imageSmoothingEnabled = false;
+      if (this.enemy.resonant) ctx.filter = `hue-rotate(${35 + (this.enemy.id * 47) % 255}deg) saturate(1.35) brightness(1.08)`;
       ctx.drawImage(img, Math.round(ex + s.x + slide + 24 - sz.w / 2), Math.round(ey + s.y + 52 - sz.h), sz.w, sz.h);
+      ctx.filter = 'none';
       ctx.imageSmoothingEnabled = false;
       if (this.enemy.resonant) {
         ctx.fillStyle = '#fff4a0';
@@ -9626,8 +9631,10 @@ class Battle {
       if (this.flash && this.flash.who === 'p' && Math.floor(this.flash.t * 24) % 2) ctx.globalAlpha = 0.25;
       if (this.active.hp <= 0) ctx.globalAlpha = 0.35;
       ctx.imageSmoothingEnabled = false;
+      if (this.active.resonant) ctx.filter = `hue-rotate(${35 + (this.active.id * 47) % 255}deg) saturate(1.35) brightness(1.08)`;
       ctx.drawImage(img, Math.round(px0 + s.x + slide + 24 - sz.w / 2),
         Math.round(py0 + s.y + 52 - sz.h), sz.w, sz.h);
+      ctx.filter = 'none';
       ctx.imageSmoothingEnabled = false;
       if (this.active.resonant) {
         ctx.fillStyle = '#fff4a0';
@@ -11059,11 +11066,23 @@ class Game {
   startWildBattle(table, opts = {}) {
     if (!this.state.party.some((m) => m.hp > 0)) return; // 싸울 몬스터가 없으면 조우하지 않는다
     const enemy = rollFromTable(table, !(opts.legendary || opts.fieldBoss));
+    if (opts.forceResonant) enemy.resonant = true;
+    if (opts.elite) {
+      enemy.elite = true;
+      enemy.level = Math.min(100, Math.max(enemy.level, Number(opts.eliteLevel || enemy.level)));
+      normalizeInstance(enemy);
+      enemy.maxHp = Math.max(enemy.maxHp, Math.floor(enemy.maxHp * 1.35));
+      enemy.hp = enemy.maxHp;
+      enemy.atk = Math.floor(enemy.atk * 1.16);
+      enemy.def = Math.floor(enemy.def * 1.16);
+      enemy.spd = Math.floor(enemy.spd * 1.10);
+    }
     const launch = () => {
       this.flash = 1;
       this.startTransition(() => {
         this.mode = 'battle';
         this.battle = new Battle(this, enemy, opts);
+        this.battle.rareEvent = opts.rareEvent || null;
         this.overlays.length = 0;
       }, MONSTERS[enemy.id]?.mythical ? 0.68 : 0.5);
     };
@@ -12656,6 +12675,397 @@ AssetManager.prototype.enemyBattlePortrait = function(species) {
 AssetManager.prototype.dexPortrait = function(species) {
   return this.enemyBattlePortrait(species);
 };
+
+/* ======================== MONSTIA v1.0.3 GAMEPLAY EXPANSION ======================== */
+
+// ---------- v1.0.3 persistent stats / save migration ----------
+const V103_BACKUP2_KEY = 'monstia.save.slot1.backup2';
+const V103_PREUPDATE_KEY = 'monstia.save.pre_v103';
+const V103_REPEAT_COOLDOWN = 30 * 60 * 1000;
+function v103DefaultStats(){ return {
+  steps:0,wildWins:0,trainerWins:0,captures:0,resonantCaptures:0,
+  rareEvents:0,treasures:0,eliteWins:0,towerWins:0,repeatQuestCompletions:0
+}; }
+function v103DefaultTower(){ return { current:1,best:0,clears:0,lastFloor:0 }; }
+function v103EnsureState(st){
+  if(!st.v103Stats) st.v103Stats=v103DefaultStats();
+  else st.v103Stats={...v103DefaultStats(),...st.v103Stats};
+  if(!st.tower) st.tower=v103DefaultTower();
+  else st.tower={...v103DefaultTower(),...st.tower};
+  if(!st.rareField) st.rareField={nextAt:0,lastType:null,lastAt:0};
+  if(!st.quests) st.quests={};
+  return st;
+}
+MIGRATIONS[19]=(d)=>{ v103EnsureState(d); return d; };
+const _v103FreshState=Game.prototype.freshState;
+Game.prototype.freshState=function(){ const st=_v103FreshState.call(this); return v103EnsureState(st); };
+
+// 세이브: primary + rolling backup 2개 + 업데이트 직전 snapshot.
+function v103ValidSaveObject(d){
+  return !!(d && typeof d==='object' && Array.isArray(d.party||[]) && Array.isArray(d.box||[]) && MAPS[d.map||START_MAP]);
+}
+function v103ValidJson(raw){ try { const d=JSON.parse(raw); return v103ValidSaveObject(d); } catch { return false; } }
+save.write=function(state){
+  try{
+    const primary=localStorage.getItem(KEY), b1=localStorage.getItem(BACKUP_KEY);
+    if(b1 && v103ValidJson(b1)) localStorage.setItem(V103_BACKUP2_KEY,b1);
+    if(primary && v103ValidJson(primary)) localStorage.setItem(BACKUP_KEY,primary);
+    const payload=JSON.stringify({...v103EnsureState(state),saveVersion:SAVE_VERSION,savedAt:Date.now(),lastGoodGameVersion:GAME_VERSION});
+    localStorage.setItem(KEY,payload);
+    const check=localStorage.getItem(KEY);
+    if(!check || !v103ValidJson(check)) throw new Error('save verification failed');
+    return true;
+  }catch(e){ console.warn('저장 검증 실패',e); return false; }
+};
+save.read=function(){
+  try{
+    const primary=localStorage.getItem(KEY);
+    if(primary){
+      try{
+        const before=JSON.parse(primary);
+        if(Number(before.saveVersion||0)<SAVE_VERSION && !localStorage.getItem(V103_PREUPDATE_KEY)) localStorage.setItem(V103_PREUPDATE_KEY,primary);
+      }catch{}
+    }
+    const candidates=[[KEY,false],[BACKUP_KEY,true],[V103_BACKUP2_KEY,true],[V103_PREUPDATE_KEY,true]];
+    for(const [key,recovered] of candidates){
+      const raw=localStorage.getItem(key); if(!raw) continue;
+      try{
+        let d=JSON.parse(raw); if(!v103ValidSaveObject(d)) continue;
+        d=migrate(d); v103EnsureState(d); if(recovered) d._recoveredFromBackup=true; return d;
+      }catch(e){ console.warn('세이브 후보 손상',key,e); }
+    }
+    return null;
+  }catch(e){ console.warn('불러오기 실패',e); return null; }
+};
+save.has=function(){ try{return !!(localStorage.getItem(KEY)||localStorage.getItem(BACKUP_KEY)||localStorage.getItem(V103_BACKUP2_KEY)||localStorage.getItem(V103_PREUPDATE_KEY));}catch{return false;} };
+save.hasBackup=function(){ try{return !!(localStorage.getItem(BACKUP_KEY)||localStorage.getItem(V103_BACKUP2_KEY)||localStorage.getItem(V103_PREUPDATE_KEY));}catch{return false;} };
+save.restoreBackup=function(){
+  try{
+    for(const key of [BACKUP_KEY,V103_BACKUP2_KEY,V103_PREUPDATE_KEY]){
+      const raw=localStorage.getItem(key); if(raw && v103ValidJson(raw)){ localStorage.setItem(KEY,raw); return true; }
+    }
+  }catch{}
+  return false;
+};
+const _v103Clear=save.clear.bind(save);
+save.clear=function(){ _v103Clear(); try{localStorage.removeItem(V103_BACKUP2_KEY);localStorage.removeItem(V103_PREUPDATE_KEY);}catch{} };
+
+// ---------- Quest expansion: 20 one-time + 10 repeatable ----------
+Object.assign(QUESTS,{
+  q_v103_field_scout:{id:'q_v103_field_scout',name:'낯선 필드의 징조',town:'태초마을',giver:'이상현상 조사원',desc:'사냥터에서 희귀 필드 이벤트를 1회 발견해 보고하자.',objective:{kind:'stat_total',key:'rareEvents',count:1},reward:{money:12000,items:{capsule_plus:3}}},
+  q_v103_water_friend:{id:'q_v103_water_friend',name:'파도를 타는 친구',town:'태초마을',giver:'하천 관찰자',desc:'파도귀를 포획해 물가 생태 기록을 보완하자.',objective:{kind:'caught',monster:8},reward:{money:9000,items:{sp_potion:2}}},
+  q_v103_stone_core:{id:'q_v103_stone_core',name:'암괴의 핵',town:'문스톤마을',giver:'암석 감정사',desc:'암괴를 포획해 암석 핵의 구조를 조사하자.',objective:{kind:'caught',monster:20},reward:{money:18000,items:{move_cd:1}}},
+  q_v103_elite_intro:{id:'q_v103_elite_intro',name:'강적의 흔적',town:'문스톤마을',giver:'경비대 조사관',desc:'희귀 필드 이벤트에서 엘리트 몬스터를 1회 제압하자.',objective:{kind:'stat_total',key:'eliteWins',count:1},reward:{money:22000,items:{potion_plus:3}}},
+  q_v103_harbor_master:{id:'q_v103_harbor_master',name:'심해의 왕',town:'노을항구',giver:'노련한 선장',desc:'심해군주를 포획해 항구의 오래된 목격담을 확인하자.',objective:{kind:'caught',monster:33},reward:{money:25000,items:{capsule_ultra:2}}},
+  q_v103_treasure_hunter:{id:'q_v103_treasure_hunter',name:'숨겨진 보급상자',town:'노을항구',giver:'해안 보물사냥꾼',desc:'희귀 필드 이벤트의 보물을 3회 찾아보자.',objective:{kind:'stat_total',key:'treasures',count:3},reward:{money:30000,items:{goddess_tear:1}}},
+  q_v103_ice_guard:{id:'q_v103_ice_guard',name:'설귀왕의 결정',town:'설원마을',giver:'빙결 연구원',desc:'설귀왕을 포획해 거대한 얼음결정을 조사하자.',objective:{kind:'caught',monster:43},reward:{money:32000,items:{sp_potion_plus:3}}},
+  q_v103_tower10:{id:'q_v103_tower10',name:'탑의 첫 관문',town:'설원마을',giver:'탑 순례자',desc:'배틀타워 10층을 돌파하자.',objective:{kind:'tower_best',count:10},reward:{money:50000,items:{capsule_ultra:3}}},
+  q_v103_thunder_king:{id:'q_v103_thunder_king',name:'왕의 낙뢰',town:'뇌광마을',giver:'낙뢰 분석가',desc:'뇌전왕을 포획해 고출력 방전 패턴을 확인하자.',objective:{kind:'caught',monster:12},reward:{money:35000,items:{sp_potion_supreme:1}}},
+  q_v103_resonant_one:{id:'q_v103_resonant_one',name:'황금빛 공명',town:'뇌광마을',giver:'공명 연구원',desc:'공명 개체를 1마리 이상 보유한 상태로 돌아오자.',objective:{kind:'owned_resonant',count:1},reward:{money:80000,items:{capsule_ultra:5,goddess_tear:1}}},
+  q_v103_astral:{id:'q_v103_astral',name:'별을 품은 진화',town:'성운마을',giver:'천문 생태학자',desc:'아스트라온을 포획해 별빛 공명 기록을 완성하자.',objective:{kind:'caught',monster:67},reward:{money:50000,items:{move_cd:2}}},
+  q_v103_rare5:{id:'q_v103_rare5',name:'다섯 번의 이상현상',town:'성운마을',giver:'공간 기록관',desc:'희귀 필드 이벤트를 누적 5회 발견하자.',objective:{kind:'stat_total',key:'rareEvents',count:5},reward:{money:65000,items:{goddess_tear:2}}},
+  q_v103_dawn:{id:'q_v103_dawn',name:'새벽의 수호조',town:'여명마을',giver:'여명 사제',desc:'아우렐리온을 포획해 새벽빛의 근원을 확인하자.',objective:{kind:'caught',monster:69},reward:{money:55000,items:{capsule_ultra:4}}},
+  q_v103_tower30:{id:'q_v103_tower30',name:'30층의 증명',town:'여명마을',giver:'탑 원정대원',desc:'배틀타워 최고 기록 30층을 달성하자.',objective:{kind:'tower_best',count:30},reward:{money:100000,items:{capsule_master:1}}},
+  q_v103_marepin:{id:'q_v103_marepin',name:'운하의 심해파',town:'청록마을',giver:'수로 생태학자',desc:'마레핀을 포획해 운하의 비정상적인 파동과 비교하자.',objective:{kind:'caught',monster:75},reward:{money:75000,items:{sp_potion_supreme:2}}},
+  q_v103_togaron:{id:'q_v103_togaron',name:'움직이는 성벽',town:'청록마을',giver:'성벽 기술자',desc:'토가론을 포획해 암석 갑주의 구조를 확인하자.',objective:{kind:'caught',monster:87},reward:{money:80000,items:{goddess_tear:2}}},
+  q_v103_nocturen:{id:'q_v103_nocturen',name:'밤보다 짙은 그림자',town:'흑월도시',giver:'야시장 추적자',desc:'녹터렌을 포획해 흑월도시의 그림자 사건을 마무리하자.',objective:{kind:'caught',monster:81},reward:{money:90000,items:{capsule_ultra:5}}},
+  q_v103_specterus:{id:'q_v103_specterus',name:'고위 망령의 기록',town:'흑월도시',giver:'영혼 기록관',desc:'스펙터스를 포획해 망령습지의 영혼 기록을 완성하자.',objective:{kind:'caught',monster:96},reward:{money:100000,items:{sp_potion_supreme:2}}},
+  q_v103_tower50:{id:'q_v103_tower50',name:'탑의 절반',town:'균열성채',giver:'균열 원정대장',desc:'배틀타워 최고 기록 50층을 달성하자.',objective:{kind:'tower_best',count:50},reward:{money:200000,items:{capsule_master:1,goddess_tear:2}}},
+  q_v103_zerkaon:{id:'q_v103_zerkaon',name:'차원의 지배자 기록',town:'균열성채',giver:'차원 생태학자',desc:'제르카온을 포획해 최종 관측 기록을 완성하자.',objective:{kind:'caught',monster:100},reward:{money:300000,items:{capsule_master:2,goddess_tear:3}}},
+
+  q_rep_town1:{id:'q_rep_town1',name:'[반복] 숲 순찰',town:'태초마을',giver:'반복의뢰 담당자',desc:'야생 몬스터를 5회 쓰러뜨리자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'wildWins',count:5},reward:{money:8000,items:{potion:3}}},
+  q_rep_town2:{id:'q_rep_town2',name:'[반복] 포획 표본',town:'문스톤마을',giver:'광산 의뢰소',desc:'야생 몬스터를 3마리 포획하자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'captures',count:3},reward:{money:12000,items:{capsule_plus:3}}},
+  q_rep_town3:{id:'q_rep_town3',name:'[반복] 해안 순찰',town:'노을항구',giver:'항구 의뢰소',desc:'필드에서 150걸음 이동해 해안 순찰을 마치자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'steps',count:150},reward:{money:15000,items:{sp_potion:2}}},
+  q_rep_town4:{id:'q_rep_town4',name:'[반복] 설원 토벌',town:'설원마을',giver:'설원 의뢰소',desc:'야생 몬스터를 8회 쓰러뜨리자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'wildWins',count:8},reward:{money:22000,items:{potion_plus:2}}},
+  q_rep_town5:{id:'q_rep_town5',name:'[반복] 전류 표본',town:'뇌광마을',giver:'전력 의뢰소',desc:'야생 몬스터를 4마리 포획하자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'captures',count:4},reward:{money:25000,items:{sp_potion_plus:2}}},
+  q_rep_town6:{id:'q_rep_town6',name:'[반복] 탑 훈련',town:'성운마을',giver:'성운 훈련관',desc:'배틀타워에서 3개 층을 돌파하자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'towerWins',count:3},reward:{money:35000,items:{candy_small:2}}},
+  q_rep_town7:{id:'q_rep_town7',name:'[반복] 엘리트 추적',town:'여명마을',giver:'여명 순찰관',desc:'엘리트 몬스터를 1회 제압하자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'eliteWins',count:1},reward:{money:45000,items:{goddess_tear:1}}},
+  q_rep_town8:{id:'q_rep_town8',name:'[반복] 수향 훈련',town:'청록마을',giver:'수향 훈련관',desc:'배틀타워에서 5개 층을 돌파하자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'towerWins',count:5},reward:{money:55000,items:{capsule_ultra:2}}},
+  q_rep_town9:{id:'q_rep_town9',name:'[반복] 야간 토벌',town:'흑월도시',giver:'흑월 의뢰소',desc:'야생 몬스터를 12회 쓰러뜨리자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'wildWins',count:12},reward:{money:65000,items:{sp_potion_supreme:1}}},
+  q_rep_town10:{id:'q_rep_town10',name:'[반복] 균열 포획',town:'균열성채',giver:'균열 의뢰소',desc:'야생 몬스터를 5마리 포획하자.',repeatable:true,cooldownMs:V103_REPEAT_COOLDOWN,objective:{kind:'counter',key:'captures',count:5},reward:{money:80000,items:{goddess_tear:1,capsule_ultra:2}}},
+});
+
+const V103_QUEST_NPCS=[
+ ['town','q_v103_field_scout','이상현상 조사원','prof'],['town','q_v103_water_friend','하천 관찰자','villagerA'],['town','q_rep_town1','반복의뢰 담당자','villagerB'],
+ ['town02','q_v103_stone_core','암석 감정사','prof'],['town02','q_v103_elite_intro','경비대 조사관','villagerA'],['town02','q_rep_town2','광산 의뢰소','villagerB'],
+ ['town03','q_v103_harbor_master','노련한 선장','villagerA'],['town03','q_v103_treasure_hunter','해안 보물사냥꾼','villagerB'],['town03','q_rep_town3','항구 의뢰소','prof'],
+ ['town04','q_v103_ice_guard','빙결 연구원','prof'],['town04','q_v103_tower10','탑 순례자','villagerA'],['town04','q_rep_town4','설원 의뢰소','villagerB'],
+ ['town05','q_v103_thunder_king','낙뢰 분석가','prof'],['town05','q_v103_resonant_one','공명 연구원','villagerA'],['town05','q_rep_town5','전력 의뢰소','villagerB'],
+ ['town06','q_v103_astral','천문 생태학자','prof'],['town06','q_v103_rare5','공간 기록관','villagerA'],['town06','q_rep_town6','성운 훈련관','villagerB'],
+ ['town07','q_v103_dawn','여명 사제','villagerA'],['town07','q_v103_tower30','탑 원정대원','villagerB'],['town07','q_rep_town7','여명 순찰관','prof'],
+ ['town08','q_v103_marepin','수로 생태학자','prof'],['town08','q_v103_togaron','성벽 기술자','villagerA'],['town08','q_rep_town8','수향 훈련관','villagerB'],
+ ['town09','q_v103_nocturen','야시장 추적자','villagerA'],['town09','q_v103_specterus','영혼 기록관','prof'],['town09','q_rep_town9','흑월 의뢰소','villagerB'],
+ ['town10','q_v103_tower50','균열 원정대장','villagerA'],['town10','q_v103_zerkaon','차원 생태학자','prof'],['town10','q_rep_town10','균열 의뢰소','villagerB'],
+];
+function v103NpcSpot(map){
+  const npcs=map.npcs||[], objs=map.objects||[], warps=map.warps||[];
+  for(let y=2;y<map.grid.length-2;y++) for(let x=2;x<map.grid[y].length-2;x++){
+    const t=TILES[map.grid[y][x]]; if(!t?.walkable) continue;
+    if(npcs.some(n=>n.x===x&&n.y===y)) continue;
+    if(warps.some(w=>w.x===x&&w.y===y)) continue;
+    if(objs.some(o=>x>=o.x&&x<o.x+(o.w||1)&&y>=o.y&&y<o.y+(o.h||1))) continue;
+    return {x,y};
+  }
+  return {x:2,y:2};
+}
+for(const [mapId,qid,name,palette] of V103_QUEST_NPCS){
+  const map=MAPS[mapId]; if(!map) continue; map.npcs ||= [];
+  if(map.npcs.some(n=>n.id===`v103_${qid}`)) continue;
+  const p=v103NpcSpot(map); map.npcs.push({id:`v103_${qid}`,name,x:p.x,y:p.y,dir:'down',palette,quest:qid,lines:['의뢰가 하나 있어.','시간이 되면 내용을 확인해 줘.']});
+}
+
+function v103CounterValue(game,key){ return Number(game.state.v103Stats?.[key]||0); }
+function v103OwnedResonant(game){ return ownedMonsters(game).filter(m=>m?.resonant).length; }
+function v103RepeatReady(st,q){ return !q.repeatable || !st?.nextAvailableAt || Date.now()>=st.nextAvailableAt; }
+function v103TimeLeft(ts){ const sec=Math.max(0,Math.ceil((ts-Date.now())/1000)),m=Math.floor(sec/60),s=sec%60; return `${m}분 ${s}초`; }
+const _v103QuestComplete=Game.prototype.questComplete;
+Game.prototype.questComplete=function(q){
+  const o=q?.objective, st=this.state.quests?.[q?.id]||{};
+  if(o?.kind==='counter'){ const base=Number(st.baseValue||0); return v103CounterValue(this,o.key)-base >= Number(o.count||1); }
+  if(o?.kind==='stat_total') return v103CounterValue(this,o.key)>=Number(o.count||1);
+  if(o?.kind==='tower_best') return Number(this.state.tower?.best||0)>=Number(o.count||1);
+  if(o?.kind==='owned_resonant') return v103OwnedResonant(this)>=Number(o.count||1);
+  return _v103QuestComplete.call(this,q);
+};
+const _v103QuestProgress=Game.prototype.questProgressText;
+Game.prototype.questProgressText=function(q){
+  const o=q?.objective, st=this.state.quests?.[q?.id]||{};
+  if(o?.kind==='counter'){ const cur=Math.max(0,v103CounterValue(this,o.key)-Number(st.baseValue||0)); return `진행 ${Math.min(cur,o.count)}/${o.count}`; }
+  if(o?.kind==='stat_total') return `누적 ${Math.min(v103CounterValue(this,o.key),o.count)}/${o.count}`;
+  if(o?.kind==='tower_best') return `배틀타워 최고 ${Math.min(Number(this.state.tower?.best||0),o.count)}/${o.count}층`;
+  if(o?.kind==='owned_resonant') return `공명 개체 ${Math.min(v103OwnedResonant(this),o.count)}/${o.count}마리`;
+  return _v103QuestProgress.call(this,q);
+};
+Game.prototype.questTalk=function(npc){
+  const q=QUESTS[npc.quest]; if(!q){this.say(npc.lines||['…'],{speaker:npc.name});return;}
+  let st=this.state.quests[q.id]||{status:'none'};
+  if(q.repeatable && st.status==='cooldown'){
+    if(v103RepeatReady(st,q)) st=this.state.quests[q.id]={status:'none',repeatCount:Number(st.repeatCount||0),lastCompletedAt:st.lastCompletedAt};
+    else { this.say([`${q.name} 보상을 이미 받았어.`,`다시 받을 수 있을 때까지 ${v103TimeLeft(st.nextAvailableAt)} 남았어.`],{speaker:npc.name}); return; }
+  }
+  if(st.status==='done' && !q.repeatable){ this.say([`${q.name}은(는) 덕분에 잘 마무리됐어.`,'고마워!'],{speaker:npc.name}); return; }
+  if(st.status==='active'){
+    if(!this.questComplete(q)){this.say([q.desc,this.questProgressText(q)],{speaker:npc.name});return;}
+    const completionText=this.questProgressText(q); this.consumeQuestObjective(q);
+    const reward=q.reward||{}; this.state.money+=reward.money||0; for(const [id,n] of Object.entries(reward.items||{})) this.addItem(id,n);
+    if(q.repeatable){
+      const repeatCount=Number(st.repeatCount||0)+1;
+      this.state.quests[q.id]={status:'cooldown',repeatCount,lastCompletedAt:Date.now(),nextAvailableAt:Date.now()+Number(q.cooldownMs||V103_REPEAT_COOLDOWN)};
+      v103EnsureState(this.state).v103Stats.repeatQuestCompletions++;
+    }else this.state.quests[q.id]={status:'done',completedAt:Date.now()};
+    if(this.state.trackedQuest===q.id){const next=Object.keys(QUESTS).find(id=>this.state.quests?.[id]?.status==='active');this.state.trackedQuest=next||null;}
+    refreshAchievements(this); sfx.caught(); this.autoSave(`${q.name} 완료 · 자동 저장`);
+    const parts=[]; if(reward.money) parts.push(`${reward.money.toLocaleString()}원`); for(const [id,n] of Object.entries(reward.items||{})) parts.push(`${ITEMS[id]?.name||id}×${n}`);
+    this.say([`${q.name} 완료!`,completionText,`보상: ${parts.join(' + ')}`,q.repeatable?'30분 후 다시 의뢰받을 수 있다.':'의뢰가 완료되었다.'],{speaker:npc.name}); return;
+  }
+  this.say([q.name,q.desc,q.repeatable?'반복 의뢰입니다. 완료 후 30분 뒤 다시 받을 수 있어.':'이 부탁을 받아줄래?'],{
+    speaker:npc.name,choices:[{label:'수락',value:true},{label:'나중에',value:false}],onChoose:(v)=>{if(!v)return;
+      const rec={status:'active',acceptedAt:Date.now(),repeatCount:Number(st.repeatCount||0)};
+      if(q.objective?.kind==='counter') rec.baseValue=v103CounterValue(this,q.objective.key);
+      this.state.quests[q.id]=rec; if(!this.state.trackedQuest)this.state.trackedQuest=q.id; this.say(['퀘스트가 등록되었다!',`추적 시작: ${q.name}`]);
+    }
+  });
+};
+
+// Repeat-aware quest menu.
+QuestMenu.prototype.update=function(dt,game){
+  const d=game.input.freshDirection(); if(d&&this.cursor.move(d))sfx.blip(); if(game.input.pressed('b')){sfx.cancel();game.pop();return;}
+  if(game.input.pressed('a')){const id=this.ids[this.cursor.i],st=game.state.quests?.[id]?.status||'none'; if(st!=='active'){sfx.deny();game.toast(st==='cooldown'?'반복 의뢰 재수락 대기 중입니다.':st==='done'?'이미 완료한 퀘스트입니다.':'먼저 의뢰인에게 수락하세요.');return;} if(game.state.trackedQuest===id){game.state.trackedQuest=null;game.toast('퀘스트 추적 해제');}else{game.state.trackedQuest=id;game.toast(`추적: ${QUESTS[id].name}`);}sfx.confirm();} void dt;
+};
+QuestMenu.prototype.drawUI=function(sc,game){
+  sc.box(3,6,154,212); sc.text('서브 퀘스트',12,12,{size:10,weight:'700',color:COL.accent});
+  const active=this.ids.filter(id=>game.state.quests?.[id]?.status==='active').length;
+  const done=this.ids.filter(id=>game.state.quests?.[id]?.status==='done').length;
+  sc.text(`진행 ${active} · 완료 ${done} · 반복 ${Number(game.state.v103Stats?.repeatQuestCompletions||0)}`,148,14,{size:5.7,align:'right',color:COL.dim,maxW:116,minSize:4.5});
+  const rows=5,start=Math.max(0,Math.min(this.cursor.i-2,Math.max(0,this.ids.length-rows)));
+  for(let k=0;k<Math.min(rows,this.ids.length);k++){const i=start+k,id=this.ids[i],q=QUESTS[id],st=game.state.quests?.[id]||{status:'none'},y=32+k*25;
+    if(this.cursor.i===i){sc.panel(9,y-2,142,22,'#e8e2f4');sc.cursor(4,y+6);} const tracked=game.state.trackedQuest===id&&st.status==='active';
+    const ready=q.repeatable&&st.status==='cooldown'&&v103RepeatReady(st,q); const mark=st.status==='done'?'✓':tracked?'★':st.status==='active'?'◆':st.status==='cooldown'?(ready?'!':'↻'):'◇';
+    const stateText=st.status==='done'?'완료':tracked?'추적 중':st.status==='active'?'진행 중':st.status==='cooldown'?(ready?'재수락 가능':'재수락 대기'):'미수락';
+    sc.text(mark,15,y+3,{size:8,color:st.status==='done'?COL.hp:COL.accent});sc.text(q.name,29,y,{size:7.5,weight:'700',maxW:116,minSize:5});sc.text(`${q.town} · ${stateText}`,29,y+11,{size:6,color:COL.dim,maxW:116});}
+  if(this.ids.length>rows){sc.text(start>0?'▲':'',153,30,{size:7,align:'right',color:COL.dim});sc.text(start+rows<this.ids.length?'▼':'',153,151,{size:7,align:'right',color:COL.dim});}
+  const q=QUESTS[this.ids[this.cursor.i]]; if(q){const st=game.state.quests?.[q.id]||{status:'none'};sc.panel(10,158,140,40,'#efece2');sc.wrap(q.desc,130,6.5).slice(0,2).forEach((line,i)=>sc.text(line,15,163+i*8,{size:6.5}));
+    if(st.status==='active'){const prog=game.questComplete(q)?'목표 완료 · 의뢰인에게 돌아가기':game.questProgressText(q);sc.text(prog,15,181,{size:6.5,color:game.questComplete(q)?COL.hp:COL.accent,maxW:130,minSize:5});}
+    else if(st.status==='cooldown') sc.text(v103RepeatReady(st,q)?'다시 수락 가능':`재수락까지 ${v103TimeLeft(st.nextAvailableAt)}`,15,181,{size:6.2,color:COL.accent,maxW:130,minSize:5});}
+  sc.text('A 추적/해제   B 뒤로',80,207,{size:6.5,align:'center',color:COL.dim});
+};
+
+// ---------- achievements: long-term goals ----------
+function v103Stat(g,k){return Number(g.state.v103Stats?.[k]||0);}
+function v103QuestScore(g){return completedQuestCount(g)+v103Stat(g,'repeatQuestCompletions');}
+function v103MaxLevel(g){return Math.max(0,...ownedMonsters(g).map(m=>Number(m?.level||0)));}
+function v103Level100Count(g){return ownedMonsters(g).filter(m=>Number(m?.level||0)>=100).length;}
+const _v103QuestAll=ACHIEVEMENTS.find(a=>a.id==='quest_all');
+if(_v103QuestAll){_v103QuestAll.desc='모든 일회성 서브 퀘스트를 완료한다.';_v103QuestAll.test=g=>Object.values(QUESTS).filter(q=>!q.repeatable).every(q=>g.state.quests?.[q.id]?.status==='done');_v103QuestAll.progress=g=>{const qs=Object.values(QUESTS).filter(q=>!q.repeatable),n=qs.filter(q=>g.state.quests?.[q.id]?.status==='done').length;return `${n}/${qs.length}개`;};}
+const V103_ACH=[
+ ['step1k','첫 장거리 여행','길 위의 여행자','필드에서 1,000걸음 이동한다.',g=>v103Stat(g,'steps')>=1000,g=>`${v103Stat(g,'steps')}/1,000`],
+ ['step10k','대륙 횡단','대륙 종주자','필드에서 10,000걸음 이동한다.',g=>v103Stat(g,'steps')>=10000,g=>`${v103Stat(g,'steps').toLocaleString()}/10,000`],
+ ['step50k','끝없는 발걸음','길의 지배자','필드에서 50,000걸음 이동한다.',g=>v103Stat(g,'steps')>=50000,g=>`${v103Stat(g,'steps').toLocaleString()}/50,000`],
+ ['wild25','사냥터 적응','야생 추적자','야생전 25회 승리.',g=>v103Stat(g,'wildWins')>=25,g=>`${v103Stat(g,'wildWins')}/25`],
+ ['wild100','숙련 사냥꾼','숙련 사냥꾼','야생전 100회 승리.',g=>v103Stat(g,'wildWins')>=100,g=>`${v103Stat(g,'wildWins')}/100`],
+ ['wild500','야생의 천적','야생 제패자','야생전 500회 승리.',g=>v103Stat(g,'wildWins')>=500,g=>`${v103Stat(g,'wildWins')}/500`],
+ ['cap25','포획 연습','캡슐 숙련자','몬스터를 누적 25마리 포획.',g=>v103Stat(g,'captures')>=25,g=>`${v103Stat(g,'captures')}/25`],
+ ['cap100','백 번의 포획','포획 전문가','몬스터를 누적 100마리 포획.',g=>v103Stat(g,'captures')>=100,g=>`${v103Stat(g,'captures')}/100`],
+ ['cap500','캡슐 마스터','포획 마스터','몬스터를 누적 500마리 포획.',g=>v103Stat(g,'captures')>=500,g=>`${v103Stat(g,'captures')}/500`],
+ ['res3','세 번의 공명','공명 추적자','공명 개체를 누적 3마리 포획.',g=>v103Stat(g,'resonantCaptures')>=3,g=>`${v103Stat(g,'resonantCaptures')}/3`],
+ ['res10','공명 수집가','황금 공명자','공명 개체를 누적 10마리 포획.',g=>v103Stat(g,'resonantCaptures')>=10,g=>`${v103Stat(g,'resonantCaptures')}/10`],
+ ['rare1','이상현상 발견','현상 관측자','희귀 필드 이벤트 1회 발견.',g=>v103Stat(g,'rareEvents')>=1,g=>`${v103Stat(g,'rareEvents')}/1`],
+ ['rare10','필드의 비밀','희귀현상 연구가','희귀 필드 이벤트 10회 발견.',g=>v103Stat(g,'rareEvents')>=10,g=>`${v103Stat(g,'rareEvents')}/10`],
+ ['rare50','현상의 중심','이상현상 전문가','희귀 필드 이벤트 50회 발견.',g=>v103Stat(g,'rareEvents')>=50,g=>`${v103Stat(g,'rareEvents')}/50`],
+ ['elite5','엘리트 사냥','강적 사냥꾼','엘리트 몬스터 5회 제압.',g=>v103Stat(g,'eliteWins')>=5,g=>`${v103Stat(g,'eliteWins')}/5`],
+ ['elite25','강적 전문','엘리트 브레이커','엘리트 몬스터 25회 제압.',g=>v103Stat(g,'eliteWins')>=25,g=>`${v103Stat(g,'eliteWins')}/25`],
+ ['treasure10','필드 보물꾼','보물 탐색가','희귀 보물 이벤트 10회 발견.',g=>v103Stat(g,'treasures')>=10,g=>`${v103Stat(g,'treasures')}/10`],
+ ['treasure50','숨은 재보','황금 탐험가','희귀 보물 이벤트 50회 발견.',g=>v103Stat(g,'treasures')>=50,g=>`${v103Stat(g,'treasures')}/50`],
+ ['tower10','10층 돌파','탑 입문자','배틀타워 10층 돌파.',g=>Number(g.state.tower?.best||0)>=10,g=>`${Number(g.state.tower?.best||0)}/10층`],
+ ['tower30','30층 돌파','탑 도전자','배틀타워 30층 돌파.',g=>Number(g.state.tower?.best||0)>=30,g=>`${Number(g.state.tower?.best||0)}/30층`],
+ ['tower50','50층 돌파','탑 정복자','배틀타워 50층 돌파.',g=>Number(g.state.tower?.best||0)>=50,g=>`${Number(g.state.tower?.best||0)}/50층`],
+ ['tower80','80층 돌파','고층의 지배자','배틀타워 80층 돌파.',g=>Number(g.state.tower?.best||0)>=80,g=>`${Number(g.state.tower?.best||0)}/80층`],
+ ['tower100','100층 제패','배틀타워 마스터','배틀타워 100층을 완주한다.',g=>Number(g.state.tower?.clears||0)>=1,g=>`${Number(g.state.tower?.clears||0)}/1회`],
+ ['towerwins50','탑 전투 50승','연승 도전자','배틀타워 층 전투 50승.',g=>v103Stat(g,'towerWins')>=50,g=>`${v103Stat(g,'towerWins')}/50`],
+ ['towerwins200','탑 전투 200승','불굴의 등반가','배틀타워 층 전투 200승.',g=>v103Stat(g,'towerWins')>=200,g=>`${v103Stat(g,'towerWins')}/200`],
+ ['repeat5','반복 의뢰 입문','성실한 해결사','반복퀘스트 5회 완료.',g=>v103Stat(g,'repeatQuestCompletions')>=5,g=>`${v103Stat(g,'repeatQuestCompletions')}/5`],
+ ['repeat25','의뢰 단골','의뢰 전문가','반복퀘스트 25회 완료.',g=>v103Stat(g,'repeatQuestCompletions')>=25,g=>`${v103Stat(g,'repeatQuestCompletions')}/25`],
+ ['repeat100','끊임없는 도움','대륙의 봉사자','반복퀘스트 100회 완료.',g=>v103Stat(g,'repeatQuestCompletions')>=100,g=>`${v103Stat(g,'repeatQuestCompletions')}/100`],
+ ['quest30x','30개의 부탁','마을의 영웅','퀘스트 완료 누적 30회.',g=>v103QuestScore(g)>=30,g=>`${v103QuestScore(g)}/30`],
+ ['quest50x','50개의 부탁','대륙의 영웅','퀘스트 완료 누적 50회.',g=>v103QuestScore(g)>=50,g=>`${v103QuestScore(g)}/50`],
+ ['quest100x','백 번의 해결','전설의 해결사','퀘스트 완료 누적 100회.',g=>v103QuestScore(g)>=100,g=>`${v103QuestScore(g)}/100`],
+ ['lv100one','최고 레벨','한계 돌파자','Lv.100 몬스터를 1마리 보유.',g=>v103MaxLevel(g)>=100,g=>`최고 Lv.${v103MaxLevel(g)}`],
+ ['lv100six','최강의 파티','완성된 조련사','Lv.100 몬스터를 6마리 보유.',g=>v103Level100Count(g)>=6,g=>`${v103Level100Count(g)}/6마리`],
+ ['money10m','천만 골드','대부호','소지금 10,000,000원을 달성.',g=>Number(g.state.money||0)>=10000000,g=>`${Math.min(10000000,Number(g.state.money||0)).toLocaleString()}/10,000,000원`],
+ ['att7','일주일의 여행','꾸준한 모험가','누적 출석 7일.',g=>Number(g.state.attendance?.totalDays||0)>=7,g=>`${Number(g.state.attendance?.totalDays||0)}/7일`],
+ ['att30','한 달의 여행','MONSTIA 주민','누적 출석 30일.',g=>Number(g.state.attendance?.totalDays||0)>=30,g=>`${Number(g.state.attendance?.totalDays||0)}/30일`],
+];
+for(const [id,name,title,desc,test,progress] of V103_ACH) if(!ACHIEVEMENTS.some(a=>a.id===id)) ACHIEVEMENTS.push({id,name,title,desc,test,progress});
+
+// ---------- rare field events ----------
+Game.prototype.v103StepTick=function(){ const st=v103EnsureState(this.state); st.v103Stats.steps++; };
+Game.prototype.maybeRareFieldEvent=function(world,props){
+  if(!props?.encounter || !world.map?.encounterTable || this.mode!=='field' || this.overlays.length) return false;
+  const st=v103EnsureState(this.state), stats=st.v103Stats, rf=st.rareField;
+  if(!rf.nextAt) rf.nextAt=stats.steps+220+Math.floor(Math.random()*281); // 220~500 encounter-eligible steps
+  if(stats.steps<rf.nextAt) return false;
+  rf.nextAt=stats.steps+220+Math.floor(Math.random()*281); stats.rareEvents++; rf.lastAt=Date.now();
+  const table=ENCOUNTER_TABLES[world.map.encounterTable]; if(!table?.length) return false;
+  const r=Math.random();
+  if(r<0.30){
+    rf.lastType='elite'; const e=table[Math.floor(Math.random()*table.length)], lv=Math.min(100,Math.max(e.min||1,e.max||1)+4);
+    this.toast('희귀 이벤트 · ELITE 출현!');
+    this.startWildBattle([{id:e.id,weight:1,min:lv,max:lv}],{elite:true,eliteLevel:lv,rareEvent:{type:'elite'}}); return true;
+  }
+  if(r<0.54){
+    rf.lastType='treasure'; stats.treasures++; const money=5000+Math.floor(Math.random()*20001)+Math.floor(stats.treasures/5)*1000;
+    this.state.money+=money; const item=Math.random()<0.12?'goddess_tear':Math.random()<0.45?'capsule_ultra':'potion_plus'; this.addItem(item,1);
+    this.autoSave('희귀 보물 발견 · 자동 저장'); this.push(new Dialogue([`숨겨진 보급상자를 발견했다!`,`${money.toLocaleString()}원과 ${ITEMS[item].name}×1 획득!`])); return true;
+  }
+  if(r<0.70){
+    rf.lastType='merchant';
+    this.push(new Dialogue(['길 한복판에서 떠돌이 상인을 만났다.','오늘만 구할 수 있는 현장 보급품이 있다고 한다.'],{
+      choices:[{label:'캡슐 묶음 18,000원',value:'capsule'},{label:'회복 묶음 15,000원',value:'heal'},{label:'지나간다',value:'none'}],
+      onChoose:(v)=>{
+        if(v==='capsule'){
+          if(this.state.money<18000){sfx.deny();this.say('돈이 부족하다.');return;}
+          this.state.money-=18000;this.addItem('capsule_ultra',1);this.addItem('capsule_plus',2);this.autoSave('떠돌이 상인 거래');this.say('울트라캡슐×1 + 강화캡슐×2를 구입했다!');
+        }else if(v==='heal'){
+          if(this.state.money<15000){sfx.deny();this.say('돈이 부족하다.');return;}
+          this.state.money-=15000;this.addItem('potion_plus',2);this.addItem('sp_potion_plus',1);this.autoSave('떠돌이 상인 거래');this.say('고급 회복약×2 + 고급 SP 물약×1을 구입했다!');
+        }
+      }
+    })); return true;
+  }
+  if(r<0.82){
+    rf.lastType='supply'; const a=1+Math.floor(Math.random()*3); this.addItem('capsule_plus',a); this.addItem('sp_potion',1);
+    this.push(new Dialogue(['떠돌이 탐사대의 보급품을 발견했다.',`강화캡슐×${a} + SP 물약×1 획득!`])); return true;
+  }
+  if(r<0.93){
+    rf.lastType='tear'; this.addItem('goddess_tear',1); stats.treasures++;
+    this.autoSave('여신의 눈물 발견 · 자동 저장'); this.push(new Dialogue(['풀숲 사이에서 희미한 푸른빛이 반짝인다…','희귀 아이템 「여신의 눈물」×1을 발견했다!'])); return true;
+  }
+  rf.lastType='resonance'; const e=table[Math.floor(Math.random()*table.length)],lv=Math.min(100,Math.max(e.min||1,e.max||1));
+  this.toast('희귀 이벤트 · 공명 파장!'); this.startWildBattle([{id:e.id,weight:1,min:lv,max:lv}],{forceResonant:true,rareEvent:{type:'resonance'}}); return true;
+};
+
+// ---------- 100-floor Battle Tower, existing monsters only ----------
+function v103TowerLevel(floor){return Math.max(10,Math.min(100,Math.round(9+floor*0.91)));}
+function v103TowerCount(floor){return floor%10===0?6:Math.min(5,2+Math.floor((floor-1)/25));}
+function v103TowerRng(seed){let x=(seed*1664525+1013904223)>>>0;return()=>{x=(x*1664525+1013904223)>>>0;return x/4294967296;};}
+function v103TowerRoster(floor){
+  const rng=v103TowerRng(103000+floor*7919),all=DEX_ORDER.filter(id=>MONSTERS[id]);
+  const normal=all.filter(id=>!MONSTERS[id].legendary && !MONSTERS[id].mythical && id!==100);
+  const legends=all.filter(id=>MONSTERS[id].legendary && id!==100);
+  const stagePool = floor<=15 ? normal.filter(id=>(MONSTERS[id].stage||1)===1)
+    : floor<=35 ? normal.filter(id=>(MONSTERS[id].stage||1)<=2)
+    : floor<=65 ? normal.filter(id=>(MONSTERS[id].stage||1)>=2)
+    : normal.filter(id=>(MONSTERS[id].stage||1)>=3);
+  const basePool=stagePool.length?stagePool:normal;
+  const count=v103TowerCount(floor),ids=[];
+  for(let i=0;i<count;i++){
+    let pool=basePool;
+    if(floor%10===0 && i===count-1 && legends.length) pool=legends;
+    if(floor===100 && i===count-1 && MONSTERS[100]) {ids.push(100);continue;}
+    const candidates=pool.filter(id=>!ids.includes(id)); const use=candidates.length?candidates:pool; ids.push(use[Math.floor(rng()*use.length)]);
+  }
+  const lv=v103TowerLevel(floor);
+  return ids.map((id,i)=>createInstance(id,Math.min(100,lv+(floor%10===0&&i===count-1?2:0)),{resonant:false}));
+}
+function v103TowerRecovery(game,floor){
+  if(floor%10===0){healParty(game.state.party);return '10층 보너스 · 파티 완전 회복';}
+  if(floor%5===0){for(const m of game.state.party||[]){normalizeInstance(m);m.hp=Math.min(m.maxHp,m.hp+Math.ceil(m.maxHp*.4));m.sp=Math.min(m.maxSp,m.sp+Math.ceil(m.maxSp*.4));}return '5층 보너스 · HP/SP 40% 회복';}
+  return null;
+}
+function v103TowerReward(game,floor){
+  let money=2500+floor*550; game.state.money+=money; const items={};
+  if(floor%10===0){items.candy_small=2;items.capsule_ultra=1;}
+  if(floor%25===0)items.goddess_tear=(items.goddess_tear||0)+1;
+  if(floor===100){money+=500000;game.state.money+=500000;items.capsule_master=2;items.goddess_tear=5;}
+  for(const [id,n] of Object.entries(items))game.addItem(id,n);
+  const desc=[`${money.toLocaleString()}원`,...Object.entries(items).map(([id,n])=>`${ITEMS[id]?.name||id}×${n}`)]; return desc.join(' + ');
+}
+Game.prototype.startTowerFloor=function(floor){
+  v103EnsureState(this.state); floor=Math.max(1,Math.min(100,Number(floor||this.state.tower.current||1)));
+  if(!this.state.party.some(m=>m.hp>0)){sfx.deny();this.say('싸울 수 있는 몬스터가 없다.');return;}
+  const roster=v103TowerRoster(floor),trainer={id:`tower_${floor}`,name:`배틀타워 ${floor}층`,roster,index:0,reward:0,before:[`${floor}층 도전이 시작된다!`],lose:[`${floor}층 클리어!`],badge:null,gym:false,rematch:false,tower:true,towerFloor:floor};
+  this.overlays.length=0;this.flash=1;this.startTransition(()=>{this.mode='battle';this.battle=new Battle(this,roster[0],{trainer});this.overlays.length=0;},0.45);
+};
+class TowerMenu{
+  constructor(){this.cursor=new MenuCursor(3);this.items=['현재 층 도전','1층부터 다시','나가기'];}
+  update(dt,game){const d=game.input.freshDirection();if(d&&this.cursor.move(d))sfx.blip();if(game.input.pressed('b')){sfx.cancel();game.pop();return;}if(!game.input.pressed('a'))return;sfx.confirm();
+    if(this.cursor.i===0){const f=Math.max(1,Math.min(100,Number(game.state.tower?.current||1)));game.startTowerFloor(f);}
+    else if(this.cursor.i===1){game.push(new Dialogue('현재 연속 등반 기록을 포기하고 1층부터 다시 시작할까요?',{choices:[{label:'아니오',value:false},{label:'예',value:true}],onChoose:v=>{if(v){game.state.tower.current=1;healParty(game.state.party);game.autoSave('배틀타워 초기화');game.toast('1층부터 다시 시작합니다.');}}}));}
+    else game.pop(); void dt;}
+  drawUI(sc,game){const t=v103EnsureState(game.state).tower,f=Math.max(1,Math.min(100,Number(t.current||1))),lv=v103TowerLevel(f),cnt=v103TowerCount(f);sc.box(5,7,150,208);sc.text('BATTLE TOWER',80,14,{size:11,weight:'700',align:'center',color:COL.accent});sc.text('현재 존재하는 MONSTIA 몬스터만 등장',80,29,{size:5.8,align:'center',color:COL.dim});
+    sc.panel(14,43,132,62,'#efece2');sc.text(`도전 층  ${f}F`,22,50,{size:10,weight:'700'});sc.text(`최고 기록  ${Number(t.best||0)}F`,22,65,{size:8,color:COL.accent});sc.text(`완주 횟수  ${Number(t.clears||0)}회`,22,78,{size:7,color:COL.dim});sc.text(`예상 Lv.${lv} · 상대 ${cnt}마리`,22,90,{size:6.5,color:COL.dim});
+    sc.text('5층마다 HP/SP 40% 회복',80,115,{size:6.5,align:'center',color:COL.dim});sc.text('10층마다 완전 회복 + 보스전',80,126,{size:6.5,align:'center',color:COL.dim});sc.text('100층 최종 보스도 기존 몬스터 구성',80,137,{size:6,align:'center',color:COL.dim});
+    this.items.forEach((it,i)=>{const y=157+i*15;if(this.cursor.i===i)sc.cursor(34,y+2);sc.text(it,46,y,{size:8.5,weight:this.cursor.i===i?'700':'400'});});sc.text('A 선택   B 뒤로',80,205,{size:7,align:'center',color:COL.dim});}
+}
+
+// Battle result stats + tower continuation.
+const _v103EndBattle=Game.prototype.endBattle;
+Game.prototype.endBattle=function(result){
+  const b=this.battle,st=v103EnsureState(this.state),stats=st.v103Stats;
+  if(b){
+    if(result==='caught'){stats.captures++;if(b.enemy?.resonant)stats.resonantCaptures++;}
+    if(result==='win'&&!b.trainer)stats.wildWins++;
+    if(result==='win'&&b.trainer&&!b.trainer.tower)stats.trainerWins++;
+    if((result==='win'||result==='caught')&&b.enemy?.elite)stats.eliteWins++;
+  }
+  if(b?.trainer?.tower){
+    const floor=Number(b.trainer.towerFloor||1);
+    if(result==='win'){
+      stats.towerWins++;st.tower.lastFloor=floor;st.tower.best=Math.max(Number(st.tower.best||0),floor);
+      const reward=v103TowerReward(this,floor),recovery=v103TowerRecovery(this,floor);
+      if(floor>=100){st.tower.clears=Number(st.tower.clears||0)+1;st.tower.current=1;healParty(this.state.party);}else st.tower.current=floor+1;
+      refreshAchievements(this);this.autoSave(`배틀타워 ${floor}층 클리어`);
+      this.startTransition(()=>{this.mode='field';this.battle=null;this.world.refreshObjects();const lines=[`배틀타워 ${floor}층을 돌파했다!`,`보상: ${reward}`];if(recovery)lines.push(recovery);if(floor>=100)lines.push('100층 완주! 다음 도전은 다시 1층부터 시작한다.');this.push(new Dialogue(lines,{onDone:()=>this.push(new TowerMenu())}));},0.35);return;
+    }
+    // Tower loss never moves the player to a center; run resets safely.
+    st.tower.current=1;healParty(this.state.party);this.autoSave('배틀타워 도전 종료');
+    this.startTransition(()=>{this.mode='field';this.battle=null;this.world.refreshObjects();this.push(new Dialogue(['배틀타워 도전이 종료되었다.','파티를 회복하고 1층부터 다시 도전할 수 있다.'],{onDone:()=>this.push(new TowerMenu())}));},0.35);return;
+  }
+  const ret=_v103EndBattle.call(this,result);refreshAchievements(this);return ret;
+};
+
+/* ======================== MONSTIA v1.0.3 GAMEPLAY EXPANSION END ======================== */
+
 const game = new Game(root);
 
 input.attach(root);
